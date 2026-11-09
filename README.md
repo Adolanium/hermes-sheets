@@ -19,7 +19,7 @@
 
 </div>
 
-<img width="2400" height="1350" alt="Sheets in Hermes Desktop: a Hermes agent building a sheet from one sentence, one agent per row filling a research column, choosing which suggested columns run, and reviewing the columns Hermes proposed from a chat before they apply" src="docs/assets/hero.jpg" />
+![Sheets in Hermes Desktop: a Hermes agent building a sheet from one sentence, one agent per row filling a research column, choosing which suggested columns run, and reviewing the columns Hermes proposed from a chat before they apply](docs/assets/hero.jpg)
 
 ## Powered by Hermes
 
@@ -173,9 +173,15 @@ Model calls apply your provider's normal usage costs.
 ```text
 Your Hermes Desktop  →  local grid storage  →  your configured Hermes models (only when you run something)
                      ↘  a copy in Hermes plugin data (only while chats can read your grids)
+                     ↘  the web, through your Hermes web tools (only when you build a sheet, run a research column, or use Ask)
 ```
 
 Grids live in Hermes plugin storage on this desktop under `hermes.plugin.sheets.*`, one key per grid. While **Chats can read my grids** is on, Sheets also keeps a copy of each grid under `plugin-data/sheets/` in your Hermes home, so the chat tools can read it. A chat sees a grid only when it calls one of those tools. Sheets has no server of its own, no telemetry, and no key handling.
+
+Two things reach past that storage, and each starts with a click from you.
+
+- **Hermes sessions with tools.** **Build sheet**, research columns, and **Ask** start hidden Hermes sessions that use your Hermes tools. They search and read third-party sites, and a research answer lists the pages it read. An approval prompt inside a build or research session is denied automatically, because nobody could see it.
+- **Files and folders you pick.** Import reads the one text or CSV file you choose in the system file dialog. Export writes the one file you name there. The folder source reads text files in a folder you grant, up to 150 of them. Sheets itself reads and writes nothing else outside Hermes storage, runs no shell commands, and starts no background process.
 
 - **Read-back writes.** Sheets reads every save back before it reports success. A save that didn't land shows **Not saved**, with CSV export as the way out.
 - **Bounded context.** A column call sends one row: its imported columns, plus any generated column the prompt names. Findings send counts, not row text.
@@ -217,7 +223,7 @@ hermes plugins validate .
 
 <div align="center">
   <strong>Sheets</strong><br />
-  <sub>The crosswise thread. The one that makes the cloth.</sub>
+  <sub>Your sheet. Hermes in every column.</sub>
 </div>
 
 <br />

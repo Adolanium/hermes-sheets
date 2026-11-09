@@ -1,5 +1,5 @@
 /**
- * Sheets - a grid where any column can be a prompt.
+ * Sheets - an agentic spreadsheet for Hermes Desktop.
  *
  * Rows come in from a paste or a file. A derived column's
  * definition is an instruction; every row resolves it through one stateless
@@ -14458,7 +14458,7 @@ function SheetsPage() {
 export default {
   id: 'sheets',
   name: 'Sheets',
-  description: 'A grid where any column can be a prompt.',
+  description: 'An agentic spreadsheet. Ask for a sheet or bring your own, and Hermes answers in every column.',
   register(ctx) {
     storage = ctx.storage
     pluginOs = ctx.os
