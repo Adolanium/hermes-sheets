@@ -1,0 +1,9 @@
+{
+  "name": "sheets",
+  "label": "Sheets",
+  "description": "Lets chats read Sheets grids and send them new grids or proposed changes",
+  "icon": "Table",
+  "tab": { "path": "/sheets", "hidden": true },
+  "entry": "dist/index.js",
+  "api": "plugin_api.py"
+}

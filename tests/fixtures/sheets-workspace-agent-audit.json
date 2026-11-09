@@ -1,0 +1,236 @@
+{
+  "exportedAt": "2026-08-25T06:25:10.364Z",
+  "format": "sheets-workspace-agent-audit",
+  "gridOrder": "workspace-index",
+  "grids": [
+    {
+      "columnCount": 6,
+      "createdAt": "2026-08-24T11:55:25.744Z",
+      "id": "g23ku8",
+      "name": "Feedback triage",
+      "rowCount": 5,
+      "updatedAt": "2026-08-24T14:55:49.977Z",
+      "receiptOrder": "newest-first",
+      "receipts": [],
+      "runOrder": "newest-first",
+      "runs": [],
+      "summary": {
+        "changedReceipts": 0,
+        "changes": 0,
+        "completedRuns": 0,
+        "failedRuns": 0,
+        "interruptedRuns": 0,
+        "missingReceiptLinks": 0,
+        "receipts": 0,
+        "receiptLinks": 0,
+        "restorableReceipts": 0,
+        "restoredReceipts": 0,
+        "runningRuns": 0,
+        "runs": 0,
+        "runsWithReceipts": 0
+      }
+    },
+    {
+      "columnCount": 6,
+      "createdAt": "2026-08-24T15:57:32.443Z",
+      "id": "g34rph",
+      "name": "Imported grid",
+      "rowCount": 2,
+      "updatedAt": "2026-08-25T01:18:42.501Z",
+      "receiptOrder": "newest-first",
+      "receipts": [
+        {
+          "changes": [
+            {
+              "after": {
+                "state": "edited",
+                "value": "billing"
+              },
+              "before": {
+                "state": "empty",
+                "value": ""
+              },
+              "column": {
+                "contract": {
+                  "enumValues": [
+                    "product",
+                    "billing",
+                    "support",
+                    "praise"
+                  ],
+                  "id": "c80p3x",
+                  "kind": "derived",
+                  "name": "theme",
+                  "prompt": "Classify {{feedback}} by its main theme.",
+                  "type": "enum"
+                },
+                "id": "c80p3x",
+                "name": "theme"
+              },
+              "reason": "Feedback 'Payment failed after three tries' describes a payment/billing issue",
+              "row": {
+                "id": "r6ntbm",
+                "label": "Payment failed after three tries. · Email",
+                "ref": "R1"
+              }
+            }
+          ],
+          "committedAt": "2026-08-25T01:18:42.500Z",
+          "id": "chg4q5jk",
+          "restore": {
+            "conflicts": [],
+            "eligible": true,
+            "message": "All 1 affected cell still match the committed edit.",
+            "state": "ready"
+          },
+          "restoredAt": null,
+          "summary": "R1's theme is blank; its feedback describes a payment failure, which maps to the billing theme. R2 and R1's other generated cells are already correct."
+        },
+        {
+          "changes": [
+            {
+              "after": {
+                "state": "edited",
+                "value": "billing"
+              },
+              "before": {
+                "state": "empty",
+                "value": ""
+              },
+              "column": {
+                "contract": {
+                  "enumValues": [
+                    "product",
+                    "billing",
+                    "support",
+                    "praise"
+                  ],
+                  "id": "c80p3x",
+                  "kind": "derived",
+                  "name": "theme",
+                  "prompt": "Classify {{feedback}} by its main theme.",
+                  "type": "enum"
+                },
+                "id": "c80p3x",
+                "name": "theme"
+              },
+              "reason": "Feedback describes a failed payment transaction, which falls under billing rather than support, product, or praise.",
+              "row": {
+                "id": "r6ntbm",
+                "label": "Payment failed after three tries. · Email",
+                "ref": "R1"
+              }
+            }
+          ],
+          "committedAt": "2026-08-24T18:35:16.469Z",
+          "id": "chg2xk8z",
+          "restore": {
+            "conflicts": [],
+            "eligible": false,
+            "message": "These cells were already restored.",
+            "state": "restored"
+          },
+          "restoredAt": "2026-08-24T18:37:02.335Z",
+          "summary": "Classify the empty theme cell based on the payment-failure feedback."
+        }
+      ],
+      "runOrder": "newest-first",
+      "runs": [
+        {
+          "completedAt": "2026-08-25T01:18:09.470Z",
+          "error": null,
+          "handoff": {
+            "id": "h2p2l7",
+            "name": "Investigate flagged feedback",
+            "workflowName": "Feedback triage workflow"
+          },
+          "id": "run2vpiw",
+          "receiptLinks": [
+            {
+              "id": "chg4q5jk",
+              "included": true
+            }
+          ],
+          "scope": {
+            "kind": "visible",
+            "rowCount": 2,
+            "rowIds": [
+              "r6ntbm",
+              "r7350f"
+            ]
+          },
+          "session": {
+            "runtimeId": "d33ce2cb",
+            "storedId": "20260825_041737_75c3d8"
+          },
+          "startedAt": "2026-08-25T01:17:37.068Z",
+          "state": "completed"
+        }
+      ],
+      "summary": {
+        "changedReceipts": 0,
+        "changes": 2,
+        "completedRuns": 1,
+        "failedRuns": 0,
+        "interruptedRuns": 0,
+        "missingReceiptLinks": 0,
+        "receipts": 2,
+        "receiptLinks": 1,
+        "restorableReceipts": 1,
+        "restoredReceipts": 1,
+        "runningRuns": 0,
+        "runs": 1,
+        "runsWithReceipts": 1
+      }
+    },
+    {
+      "columnCount": 0,
+      "createdAt": "2026-08-24T17:18:25.047Z",
+      "id": "g2l3us",
+      "name": "Untitled grid",
+      "rowCount": 0,
+      "updatedAt": "2026-08-24T17:18:25.047Z",
+      "receiptOrder": "newest-first",
+      "receipts": [],
+      "runOrder": "newest-first",
+      "runs": [],
+      "summary": {
+        "changedReceipts": 0,
+        "changes": 0,
+        "completedRuns": 0,
+        "failedRuns": 0,
+        "interruptedRuns": 0,
+        "missingReceiptLinks": 0,
+        "receipts": 0,
+        "receiptLinks": 0,
+        "restorableReceipts": 0,
+        "restoredReceipts": 0,
+        "runningRuns": 0,
+        "runs": 0,
+        "runsWithReceipts": 0
+      }
+    }
+  ],
+  "receiptOrder": "newest-first",
+  "runOrder": "newest-first",
+  "scope": "workspace-agent-runs-and-change-receipts",
+  "summary": {
+    "changedReceipts": 0,
+    "changes": 2,
+    "completedRuns": 1,
+    "failedRuns": 0,
+    "grids": 3,
+    "gridsWithReceipts": 1,
+    "gridsWithRuns": 1,
+    "interruptedRuns": 0,
+    "missingReceiptLinks": 0,
+    "receipts": 2,
+    "receiptLinks": 1,
+    "restorableReceipts": 1,
+    "restoredReceipts": 1,
+    "runningRuns": 0,
+    "runs": 1,
+    "runsWithReceipts": 1
+  },
+  "version": 2
+}
