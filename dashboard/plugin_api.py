@@ -84,3 +84,8 @@ def read_picked_file(body: dict = Body(...)) -> dict:
 @router.post("/picked-file/write")
 def write_picked_file(body: dict = Body(...)) -> dict:
     return _picked().write_text(body.get("path"), body.get("text"), _store().hermes_home())
+
+
+@router.post("/picked-file/xlsx")
+def write_picked_workbook(body: dict = Body(...)) -> dict:
+    return _picked().write_xlsx(body.get("path"), body.get("sheet"), _store().hermes_home())

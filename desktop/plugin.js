@@ -376,8 +376,16 @@ function toCsv(columns, rows) {
   // A research column carries its evidence out of Sheets: a <name>_sources
   // column beside it, space-separated URLs, so the CSV still says where each
   // answer came from.
-  const fields = columns.flatMap(column => [
-    { name: column.name, read: row => row.cells[column.id]?.value ?? '' },
+  const fields = exportFields(columns)
+  const head = fields.map(field => esc(field.name)).join(',')
+  const body = rows.map(row => fields.map(field => esc(field.read(row))).join(','))
+
+  return [head, ...body].join('\n')
+}
+
+function exportFields(columns) {
+  return columns.flatMap(column => [
+    { name: column.name, read: row => row.cells[column.id]?.value ?? '', type: column.type },
     ...(column.research
       ? [
           {
@@ -391,10 +399,6 @@ function toCsv(columns, rows) {
         ]
       : [])
   ])
-  const head = fields.map(field => esc(field.name)).join(',')
-  const body = rows.map(row => fields.map(field => esc(field.read(row))).join(','))
-
-  return [head, ...body].join('\n')
 }
 
 // ---------------------------------------------------------------------------
@@ -567,6 +571,453 @@ function cycleError(column, columns) {
   }
 
   return walk(column, [column.name])
+}
+
+// ---------------------------------------------------------------------------
+// Formulas. A formula column computes each row from that row's own cells with
+// no model call: {{price}} * {{quantity}}. Names, not cell addresses, so a
+// sort, a filter or a new row never points a formula at the wrong row. A
+// totals row under the grid sums, averages or counts any column.
+// ---------------------------------------------------------------------------
+
+const FORMULA_FUNCTIONS = {
+  ABS: args => Math.abs(formulaNumber(args[0])),
+  AND: args => args.every(formulaTruth),
+  AVERAGE: args => {
+    const values = formulaNumbers(args)
+
+    if (values.length === 0) {
+      throw new Error('AVERAGE has no numbers to average')
+    }
+
+    return values.reduce((sum, value) => sum + value, 0) / values.length
+  },
+  CONCAT: args => args.map(formulaText).join(''),
+  COUNT: args => args.filter(value => typeof value === 'number' || (value !== '' && Number.isFinite(formulaParse(value)))).length,
+  IF: args => (formulaTruth(args[0]) ? args[1] ?? true : args[2] ?? ''),
+  LEN: args => formulaText(args[0]).length,
+  LOWER: args => formulaText(args[0]).toLowerCase(),
+  MAX: args => Math.max(...formulaNumbers(args, 0)),
+  MIN: args => Math.min(...formulaNumbers(args, 0)),
+  NOT: args => !formulaTruth(args[0]),
+  OR: args => args.some(formulaTruth),
+  ROUND: args => {
+    const digits = Math.max(-10, Math.min(10, Math.trunc(formulaNumber(args[1] ?? 0))))
+    const scale = 10 ** digits
+
+    return Math.round(formulaNumber(args[0]) * scale) / scale
+  },
+  SUM: args => formulaNumbers(args).reduce((sum, value) => sum + value, 0),
+  UPPER: args => formulaText(args[0]).toUpperCase()
+}
+
+/** A cell's text as a number: commas, spaces and a leading currency sign are
+ *  ignored, and a trailing % divides by 100. NaN when it is not a number. */
+function formulaParse(text) {
+  const raw = String(text ?? '').trim().replace(/[,\s]/g, '').replace(/^[-+]?[$€£¥]/, sign => sign.replace(/[$€£¥]/, ''))
+  const percent = raw.endsWith('%')
+  const body = percent ? raw.slice(0, -1) : raw
+
+  if (!/^[-+]?(\d+\.?\d*|\.\d+)(e[-+]?\d+)?$/i.test(body)) {
+    return NaN
+  }
+
+  return Number(body) / (percent ? 100 : 1)
+}
+
+function formulaNumber(value) {
+  if (typeof value === 'number') {
+    return value
+  }
+
+  if (typeof value === 'boolean') {
+    return value ? 1 : 0
+  }
+
+  if (value === '' || value === undefined) {
+    return 0
+  }
+
+  const number = formulaParse(value)
+
+  if (!Number.isFinite(number)) {
+    throw new Error(`"${String(value).slice(0, 40)}" is not a number`)
+  }
+
+  return number
+}
+
+/** Numeric arguments only, the way SUM and MAX skip text in a spreadsheet. */
+function formulaNumbers(args, fallback) {
+  const values = args
+    .map(value => (typeof value === 'number' ? value : typeof value === 'boolean' ? NaN : formulaParse(value)))
+    .filter(Number.isFinite)
+
+  return values.length === 0 && fallback !== undefined ? [fallback] : values
+}
+
+function formulaText(value) {
+  return typeof value === 'number' ? formulaFormat(value) : typeof value === 'boolean' ? (value ? 'TRUE' : 'FALSE') : String(value ?? '')
+}
+
+function formulaTruth(value) {
+  if (typeof value === 'string') {
+    const key = value.trim().toLowerCase()
+
+    return key !== '' && key !== '0' && key !== 'false' && key !== 'no'
+  }
+
+  return Boolean(value)
+}
+
+function formulaFormat(value) {
+  return Number.isFinite(value) ? String(Number(value.toPrecision(12))) : ''
+}
+
+const FORMULA_TOKEN = /\s*(?:(\{\{\s*[a-z0-9_]+\s*\}\})|("(?:[^"]|"")*")|((?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?)|([A-Za-z_][A-Za-z0-9_]*)|(<=|>=|<>|[-+*/^&=<>(),%]))/gy
+
+/** Parse once into a closure. Precedence, low to high: comparison, &, + -,
+ *  * /, ^, unary minus, then values. Throws a readable error. */
+function compileFormula(source) {
+  const text = String(source || '').trim().replace(/^=/, '')
+  const tokens = []
+  FORMULA_TOKEN.lastIndex = 0
+
+  while (FORMULA_TOKEN.lastIndex < text.length) {
+    const at = FORMULA_TOKEN.lastIndex
+    const match = FORMULA_TOKEN.exec(text)
+
+    if (!match || match[0].trim() === '') {
+      if (text.slice(at).trim() === '') {
+        break
+      }
+
+      throw new Error(`Sheets can't read the formula at "${text.slice(at, at + 12).trim()}"`)
+    }
+
+    tokens.push(
+      match[1]
+        ? { ref: match[1].replace(/[{}\s]/g, '').toLowerCase() }
+        : match[2]
+          ? { value: match[2].slice(1, -1).replace(/""/g, '"') }
+          : match[3]
+            ? { value: Number(match[3]) }
+            : match[4]
+              ? { word: match[4] }
+              : { op: match[5] }
+    )
+  }
+
+  if (tokens.length === 0) {
+    throw new Error('Write a formula, for example {{price}} * {{quantity}}')
+  }
+
+  let index = 0
+  const peek = () => tokens[index]
+  const isOp = (...ops) => peek() && ops.includes(peek().op)
+  const take = op => {
+    if (!isOp(op)) {
+      throw new Error(peek() ? `Expected "${op}"` : `The formula ends early, expected "${op}"`)
+    }
+
+    index += 1
+  }
+  const binary = (next, ops, apply) => () => {
+    let left = next()
+
+    while (isOp(...ops)) {
+      const op = tokens[index++].op
+      const right = next()
+      const before = left
+
+      left = scope => apply(op, before(scope), right(scope))
+    }
+
+    return left
+  }
+  const compare = (op, a, b) => {
+    const numeric = [a, b].every(value => typeof value === 'number' || Number.isFinite(formulaParse(value)))
+    const x = numeric ? formulaNumber(a) : formulaText(a).toLowerCase()
+    const y = numeric ? formulaNumber(b) : formulaText(b).toLowerCase()
+
+    return op === '=' ? x === y : op === '<>' ? x !== y : op === '<' ? x < y : op === '>' ? x > y : op === '<=' ? x <= y : x >= y
+  }
+  const arithmetic = (op, a, b) => {
+    const x = formulaNumber(a)
+    const y = formulaNumber(b)
+
+    if (op === '/' && y === 0) {
+      throw new Error('Division by zero')
+    }
+
+    return op === '+' ? x + y : op === '-' ? x - y : op === '*' ? x * y : op === '/' ? x / y : x ** y
+  }
+  let comparison
+  const primary = () => {
+    const token = peek()
+
+    if (!token) {
+      throw new Error('The formula ends early')
+    }
+
+    index += 1
+
+    if (token.ref) {
+      return scope => scope(token.ref)
+    }
+
+    if ('value' in token) {
+      return () => token.value
+    }
+
+    if (token.op === '(') {
+      const inner = comparison()
+
+      take(')')
+
+      return inner
+    }
+
+    if (token.word) {
+      const name = token.word.toUpperCase()
+
+      if (name === 'TRUE' || name === 'FALSE') {
+        return () => name === 'TRUE'
+      }
+
+      if (!isOp('(')) {
+        return scope => scope(token.word.toLowerCase())
+      }
+
+      const fn = FORMULA_FUNCTIONS[name]
+
+      if (!fn) {
+        throw new Error(`Sheets has no ${name} function. Try ${Object.keys(FORMULA_FUNCTIONS).join(', ')}`)
+      }
+
+      take('(')
+      const args = []
+
+      if (!isOp(')')) {
+        do {
+          args.push(comparison())
+        } while (isOp(',') && ++index)
+      }
+
+      take(')')
+
+      return scope => fn(args.map(arg => arg(scope)))
+    }
+
+    throw new Error(`Unexpected "${token.op}"`)
+  }
+  const unary = () => {
+    if (isOp('-', '+')) {
+      const sign = tokens[index++].op
+      const inner = unary()
+
+      return scope => (sign === '-' ? -formulaNumber(inner(scope)) : formulaNumber(inner(scope)))
+    }
+
+    const value = primary()
+
+    if (isOp('%')) {
+      index += 1
+
+      return scope => formulaNumber(value(scope)) / 100
+    }
+
+    return value
+  }
+  const power = binary(unary, ['^'], arithmetic)
+  const product = binary(power, ['*', '/'], arithmetic)
+  const sum = binary(product, ['+', '-'], arithmetic)
+  const joined = binary(sum, ['&'], (op, a, b) => formulaText(a) + formulaText(b))
+
+  comparison = binary(joined, ['=', '<>', '<', '>', '<=', '>='], compare)
+
+  const run = comparison()
+
+  if (index < tokens.length) {
+    throw new Error(`Unexpected "${tokens[index].op || tokens[index].word || tokens[index].ref || tokens[index].value}"`)
+  }
+
+  return run
+}
+
+const compiledFormulas = new Map()
+
+function formulaRunner(source) {
+  if (!compiledFormulas.has(source)) {
+    if (compiledFormulas.size > 200) {
+      compiledFormulas.clear()
+    }
+
+    try {
+      compiledFormulas.set(source, { run: compileFormula(source) })
+    } catch (error) {
+      compiledFormulas.set(source, { error: error instanceof Error ? error.message : String(error) })
+    }
+  }
+
+  return compiledFormulas.get(source)
+}
+
+/** The column keys a formula reads, braced or bare. */
+function formulaKeys(source) {
+  return [
+    ...new Set(
+      [...String(source || '').replace(/"(?:[^"]|"")*"/g, '').matchAll(/\{\{\s*([a-z0-9_]+)\s*\}\}|\b([A-Za-z_][A-Za-z0-9_]*)\b(?!\s*\()/g)]
+        .map(match => (match[1] || match[2]).toLowerCase())
+        .filter(key => key !== 'true' && key !== 'false')
+    )
+  ]
+}
+
+const WAITING = Symbol('waiting')
+
+/** One row's formula result as a cell. A referenced prompt column that has no
+ *  answer yet leaves the result blank instead of counting it as zero. */
+function formulaCell(column, cells, byKey) {
+  const compiled = formulaRunner(column.formula)
+
+  if (compiled.error) {
+    return cell('failed', '', { error: compiled.error })
+  }
+
+  try {
+    const value = compiled.run(key => {
+      const source = byKey.get(key)
+
+      if (!source) {
+        throw new Error(`There is no column called {{${key}}}`)
+      }
+
+      const stored = cells[source.id]
+
+      if (source.kind === 'derived' && stored?.state !== 'done' && stored?.state !== 'edited') {
+        throw WAITING
+      }
+
+      if (source.formula && stored?.state === 'failed') {
+        throw new Error(`{{${key}}} has an error`)
+      }
+
+      return String(stored?.value ?? '')
+    })
+
+    return cell('done', formulaText(value))
+  } catch (error) {
+    return error === WAITING ? cell('empty', '') : cell('failed', '', { error: error instanceof Error ? error.message : String(error) })
+  }
+}
+
+/** Formula columns in an order where each runs after the formulas it reads.
+ *  A column caught in a loop comes back in `cyclic`. */
+function formulaOrder(columns) {
+  const byKey = new Map(columns.map(column => [slug(column.name), column]))
+  const order = []
+  const state = new Map()
+  const cyclic = new Set()
+  const visit = (column, trail) => {
+    if (state.get(column.id) === 'done') {
+      return
+    }
+
+    if (state.get(column.id) === 'open') {
+      trail.slice(trail.indexOf(column.id)).forEach(id => cyclic.add(id))
+
+      return
+    }
+
+    state.set(column.id, 'open')
+
+    for (const key of formulaKeys(column.formula)) {
+      const next = byKey.get(key)
+
+      if (next?.formula) {
+        visit(next, [...trail, column.id])
+      }
+    }
+
+    state.set(column.id, 'done')
+    order.push(column)
+  }
+
+  columns.filter(column => column.formula).forEach(column => visit(column, [column.id]))
+
+  return { byKey, cyclic, order }
+}
+
+/** Recompute every formula cell. Returns the same grid when nothing changed,
+ *  so a save that touched nothing a formula reads costs nothing extra. */
+function applyFormulas(grid) {
+  if (!grid?.columns?.some(column => column.formula)) {
+    return grid
+  }
+
+  const { byKey, cyclic, order } = formulaOrder(grid.columns)
+  let changed = false
+  const rows = grid.rows.map(row => {
+    let cells = row.cells
+
+    for (const column of order) {
+      const next = cyclic.has(column.id)
+        ? cell('failed', '', { error: 'This formula reads itself through another formula column' })
+        : formulaCell(column, cells, byKey)
+      const current = cells[column.id]
+
+      if (current?.state !== next.state || String(current?.value ?? '') !== next.value || (current?.error || '') !== (next.error || '')) {
+        cells = cells === row.cells ? { ...row.cells } : cells
+        cells[column.id] = { ...next, revision: nextCellRevision() }
+        changed = true
+      }
+    }
+
+    return cells === row.cells ? row : { ...row, cells }
+  })
+
+  return changed ? { ...grid, rows } : grid
+}
+
+const TOTALS = { average: 'Average', count: 'Count', max: 'Max', min: 'Min', sum: 'Sum' }
+
+/** A totals-row figure over the rows on screen. Count counts filled cells;
+ *  the rest use the cells that hold numbers. */
+function columnTotal(kind, column, rows) {
+  const values = rows.map(row => String(row.cells[column.id]?.value ?? '').trim()).filter(Boolean)
+
+  if (kind === 'count') {
+    return String(values.length)
+  }
+
+  const numbers = values.map(formulaParse).filter(Number.isFinite)
+
+  if (!TOTALS[kind] || numbers.length === 0) {
+    return ''
+  }
+
+  const result =
+    kind === 'sum' || kind === 'average'
+      ? numbers.reduce((sum, value) => sum + value, 0) / (kind === 'average' ? numbers.length : 1)
+      : kind === 'min'
+        ? Math.min(...numbers)
+        : Math.max(...numbers)
+
+  return Number(result.toPrecision(12)).toLocaleString(undefined, { maximumFractionDigits: 2 })
+}
+
+function setColumnTotal(columnId, kind) {
+  const grid = $grid.get()
+  const totals = { ...(grid.totals || {}) }
+
+  if (TOTALS[kind]) {
+    totals[columnId] = kind
+  } else {
+    delete totals[columnId]
+  }
+
+  setGrid({ ...grid, totals })
 }
 
 /** The per-row prompt: template substitution plus a block of the row's data. */
@@ -1545,6 +1996,7 @@ function persist() {
 }
 
 function setGrid(next, options = {}) {
+  next = applyFormulas(next)
   const current = $grid.get()
   const now = Date.now()
   const normalized = {
@@ -3266,16 +3718,13 @@ function updateColumn(columnId, patch) {
         return { ...column, ...patch }
       }
 
-      if (!renamed || !column.prompt) {
+      if (!renamed || !(column.prompt || column.formula)) {
         return column
       }
 
-      return {
-        ...column,
-        prompt: column.prompt.replace(TEMPLATE_RE, (whole, key) =>
-          String(key).toLowerCase() === from ? `{{${to}}}` : whole
-        )
-      }
+      const rewrite = text => text.replace(TEMPLATE_RE, (whole, key) => (String(key).toLowerCase() === from ? `{{${to}}}` : whole))
+
+      return column.formula ? { ...column, formula: rewrite(column.formula) } : { ...column, prompt: rewrite(column.prompt) }
     }),
     rows: grid.rows.map(row => {
       const next = { ...row, review: undefined }
@@ -3293,9 +3742,11 @@ function updateColumn(columnId, patch) {
 
 function removeColumn(columnId) {
   const grid = $grid.get()
+  const { [columnId]: dropped, ...totals } = grid.totals || {}
 
   setGrid({
     ...grid,
+    totals,
     columns: grid.columns.filter(column => column.id !== columnId),
     rows: grid.rows.map(row => {
       const cells = { ...row.cells }
@@ -5039,11 +5490,38 @@ async function saveTextFile(dialog, text) {
   return written.path || path
 }
 
-function exportCsv(columns, rows) {
-  return saveTextFile(
-    { defaultPath: 'sheets.csv', filters: [{ extensions: ['csv'], name: 'CSV' }], title: 'Export grid' },
-    toCsv(columns, rows)
-  )
+/** An Excel workbook or CSV, by the extension picked in the save dialog. For
+ *  .xlsx the page sends the rows and the backend builds the file (picked.py). */
+async function exportGrid(columns, rows, name) {
+  if (!pluginOs?.pickSavePath || !pluginRest) {
+    throw new Error('Saving is unavailable in this shell.')
+  }
+
+  const path = await pluginOs.pickSavePath({
+    defaultPath: `${slug(name) || 'sheets'}.xlsx`,
+    filters: [
+      { extensions: ['xlsx'], name: 'Excel workbook' },
+      { extensions: ['csv'], name: 'CSV' }
+    ],
+    title: 'Export grid'
+  })
+
+  if (!path) {
+    return null
+  }
+
+  if (!/\.xlsx$/i.test(path)) {
+    return (await pickedFile('write', { path, text: toCsv(columns, rows) }, 'Hermes could not write that file.')).path || path
+  }
+
+  const fields = exportFields(columns)
+  const sheet = {
+    columns: fields.map(field => ({ name: field.name, type: field.type === 'number' ? 'number' : 'text' })),
+    name: String(name || 'Sheet'),
+    rows: rows.map(row => fields.map(field => String(field.read(row))))
+  }
+
+  return (await pickedFile('xlsx', { path, sheet }, 'Hermes could not write that workbook.')).path || path
 }
 
 async function exportAgentAudit(grid) {
@@ -5117,6 +5595,12 @@ const CSS = `
 .sheets-needs-review { background: color-mix(in srgb, var(--ui-accent) 6%, transparent); }
 .sheets-cell:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--ui-accent); }
 .sheets-edited { background: color-mix(in srgb, var(--ui-accent) 9%, transparent); }
+.sheets-hermes { position: relative; --sheets-c: hsl(262 72% 58%); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--sheets-c) 45%, transparent); }
+.sheets-hermes::after { content: ''; position: absolute; top: 0; right: 0; width: 7px; height: 7px; background: var(--sheets-c); clip-path: polygon(0 0, 100% 0, 100% 100%); pointer-events: none; }
+.sheets-pick { opacity: 0; transition: opacity 120ms; }
+.sheets-cell:hover .sheets-pick, .sheets-cell:focus-visible .sheets-pick { opacity: .55; }
+.sheets-total-empty span { opacity: 0; transition: opacity 120ms; }
+.sheets-totals:hover .sheets-total-empty span, .sheets-total-empty:focus-within span { opacity: .7; }
 .sheets-handback { background: transparent; color: var(--ui-text-tertiary); cursor: pointer; transition: background 120ms ease, color 120ms ease; }
 .sheets-handback:hover, .sheets-handback:focus-visible { background: color-mix(in srgb, var(--ui-accent) 14%, transparent); color: var(--ui-text-primary); outline: none; }
 .sheets-num { font-variant-numeric: tabular-nums; }
@@ -6138,6 +6622,10 @@ function checkProposal(payload, grid, source) {
       return fail('The sheet structure changed after these rows were sent. Start a fresh Ask turn before applying edits.')
     }
 
+    if (currentColumn.formula) {
+      return fail(`${contract.name} is a formula column. Its values are computed, so nothing was changed.`)
+    }
+
     const raw = proposalValue(candidate.value)
 
     if (!raw.trim() || raw.length > WRITEBACK_MAX_VALUE) {
@@ -6818,13 +7306,14 @@ function sharedGridCopy(grid) {
       Object.assign(
         {
           id: column.id,
-          kind: column.kind === 'literal' ? 'source' : 'generated',
+          kind: column.formula ? 'formula' : column.kind === 'literal' ? 'source' : 'generated',
           name: column.name,
           type: column.type || 'text'
         },
         column.type === 'enum' ? { options: [...(column.enumValues || [])] } : {},
         column.kind !== 'literal' && column.prompt ? { prompt: String(column.prompt) } : {},
-        column.research ? { research: true } : {}
+        column.research ? { research: true } : {},
+        column.formula ? { formula: `=${column.formula}` } : {}
       )
     ),
     id: grid.id,
@@ -8032,7 +8521,7 @@ function LocalSaveState() {
   const failed = status.state === 'error'
   const saving = status.state === 'saving'
   const label = failed
-    ? `Latest changes are not saved locally. ${status.error || 'Hermes did not confirm the write.'} Export CSV now to keep a copy.`
+    ? `Latest changes are not saved locally. ${status.error || 'Hermes did not confirm the write.'} Export the grid now to keep a copy.`
     : saving
       ? 'Saving the latest changes to Hermes local storage.'
       : status.state === 'saved'
@@ -9825,7 +10314,7 @@ function UpdateDataPanel({ grid, onCancel, onDone }) {
 // UI - column editor
 // ---------------------------------------------------------------------------
 
-function columnFromDraft({ editing, enumText, name, peers, prompt, research, type }) {
+function columnFromDraft({ editing, enumText, formula, name, peers, prompt, research, rows = [], type }) {
   const trimmed = name.trim()
 
   if (!trimmed) {
@@ -9834,6 +10323,10 @@ function columnFromDraft({ editing, enumText, name, peers, prompt, research, typ
 
   if (peers.some(column => slug(column.name) === slug(trimmed))) {
     return { error: `Another column already answers to {{${slug(trimmed)}}}. Pick a different name.` }
+  }
+
+  if (formula) {
+    return formulaColumnFromDraft({ editing, name: trimmed, peers, rows, source: prompt.trim().replace(/^=/, '').trim() })
   }
 
   if (!prompt.trim()) {
@@ -9873,9 +10366,44 @@ function columnFromDraft({ editing, enumText, name, peers, prompt, research, typ
   return cycle ? { error: cycle } : { column }
 }
 
+/** A formula column is a source column whose cells Sheets computes. It is
+ *  typed as a number when every row it can compute now comes out as one, so
+ *  it sorts and totals as numbers. */
+function formulaColumnFromDraft({ editing, name, peers, rows, source }) {
+  if (!source) {
+    return { error: 'Write the formula, for example {{price}} * {{quantity}}.' }
+  }
+
+  const compiled = formulaRunner(source)
+
+  if (compiled.error) {
+    return { error: compiled.error }
+  }
+
+  const unknown = formulaKeys(source).filter(key => !peers.some(column => slug(column.name) === key))
+
+  if (unknown.length > 0) {
+    return { error: `There is no column called ${unknown.map(key => `{{${key}}}`).join(' or ')}. Click a chip below to insert a real one.` }
+  }
+
+  const column = { formula: source, id: editing?.id ?? uid('c'), kind: 'literal', name, type: 'text' }
+  const { byKey, cyclic } = formulaOrder([...peers, column])
+
+  if (cyclic.has(column.id)) {
+    return { error: 'This formula reads itself through another formula column.' }
+  }
+
+  const values = rows.map(row => formulaCell(column, row.cells, byKey)).filter(result => result.state === 'done' && result.value !== '')
+
+  column.type = values.length > 0 && values.every(result => Number.isFinite(formulaParse(result.value))) ? 'number' : 'text'
+
+  return { column }
+}
+
 function ColumnForm({ columns, editing, onCancel, onSave, rows = [], selectedRowIds = [] }) {
   const [name, setName] = useState(editing?.name ?? '')
-  const [prompt, setPrompt] = useState(editing?.prompt ?? '')
+  const [prompt, setPrompt] = useState(editing?.formula ?? editing?.prompt ?? '')
+  const [formula, setFormula] = useState(Boolean(editing?.formula))
   const [type, setType] = useState(editing?.type ?? 'text')
   const [enumText, setEnumText] = useState((editing?.enumValues ?? ['yes', 'no', 'maybe']).join(', '))
   const [research, setResearch] = useState(Boolean(editing?.research))
@@ -9913,7 +10441,7 @@ function ColumnForm({ columns, editing, onCancel, onSave, rows = [], selectedRow
     setPreview(null)
     setPreviewing(false)
     setPreviewActivity('')
-  }, [enumText, name, previewRowId, prompt, research, type])
+  }, [enumText, formula, name, previewRowId, prompt, research, type])
 
   useEffect(
     () => () => {
@@ -9950,7 +10478,7 @@ function ColumnForm({ columns, editing, onCancel, onSave, rows = [], selectedRow
   }
 
   const save = useCallback(() => {
-    const draft = columnFromDraft({ editing, enumText, name, peers, prompt, research, type })
+    const draft = columnFromDraft({ editing, enumText, formula, name, peers, prompt, research, rows, type })
 
     if (draft.error) {
       setError(draft.error)
@@ -9959,10 +10487,10 @@ function ColumnForm({ columns, editing, onCancel, onSave, rows = [], selectedRow
     }
 
     onSave(draft.column)
-  }, [editing, enumText, name, onSave, peers, prompt, research, type])
+  }, [editing, enumText, formula, name, onSave, peers, prompt, research, rows, type])
 
   const runPreview = useCallback(async () => {
-    const draft = columnFromDraft({ editing, enumText, name, peers, prompt, research, type })
+    const draft = columnFromDraft({ editing, enumText, formula, name, peers, prompt, research, rows, type })
 
     if (draft.error) {
       setError(draft.error)
@@ -9972,6 +10500,15 @@ function ColumnForm({ columns, editing, onCancel, onSave, rows = [], selectedRow
 
     if (!previewRow) {
       setError('There is no row available to test.')
+
+      return
+    }
+
+    if (formula) {
+      const result = formulaCell(draft.column, previewRow.cells, formulaOrder([...peers, draft.column]).byKey)
+
+      setError('')
+      setPreview({ calls: 0, error: result.error, ms: 0, ok: result.state !== 'failed', raw: '', rowId: previewRow.id, value: result.value || 'blank' })
 
       return
     }
@@ -10024,7 +10561,7 @@ function ColumnForm({ columns, editing, onCancel, onSave, rows = [], selectedRow
         setPreviewing(false)
       }
     }
-  }, [editing, enumText, name, peers, previewRow, prompt, research, type])
+  }, [editing, enumText, formula, name, peers, previewRow, prompt, research, rows, type])
 
   return jsxs('div', {
     className: 'flex flex-col gap-3 border-b px-4 py-4',
@@ -10045,7 +10582,9 @@ function ColumnForm({ columns, editing, onCancel, onSave, rows = [], selectedRow
             style: T.quaternary,
             children: editing
               ? 'Existing values are kept. Rename safely - every {{reference}} to this column is rewritten.'
-              : 'Its definition is an instruction. Every row answers it once, independently.'
+              : formula
+                ? 'A formula computes every row from its other columns, instantly and with no model call.'
+                : 'Its definition is an instruction. Every row answers it once, independently.'
           })
         ]
       }),
@@ -10057,8 +10596,9 @@ function ColumnForm({ columns, editing, onCancel, onSave, rows = [], selectedRow
       }),
 
       jsx(Textarea, {
+        className: formula ? 'font-mono' : undefined,
         onChange: event => setPrompt(event.target.value),
-        placeholder: TYPE_META[type].starter,
+        placeholder: formula ? '{{price}} * {{quantity}}' : TYPE_META[type].starter,
         ref: promptRef,
         rows: 3,
         value: prompt
@@ -10103,7 +10643,9 @@ function ColumnForm({ columns, editing, onCancel, onSave, rows = [], selectedRow
         ]
       }),
 
-      jsxs('div', {
+      formula
+        ? null
+        : jsxs('div', {
         className: 'flex flex-col gap-1.5 border-t pt-3',
         style: T.rule,
         children: [
@@ -10138,30 +10680,44 @@ function ColumnForm({ columns, editing, onCancel, onSave, rows = [], selectedRow
             children: [
               jsx('span', { className: 'pr-1 text-xs', style: T.quaternary, children: 'each row' }),
               jsxs(Button, {
-                onClick: () => setResearch(false),
+                onClick: () => {
+                  setFormula(false)
+                  setResearch(false)
+                },
                 size: 'xs',
-                variant: research ? 'ghost' : 'default',
+                variant: research || formula ? 'ghost' : 'default',
                 children: [jsx(icons.Zap, {}), 'Answers from the row']
               }),
               jsxs(Button, {
-                onClick: () => setResearch(true),
+                onClick: () => {
+                  setFormula(false)
+                  setResearch(true)
+                },
                 size: 'xs',
-                variant: research ? 'default' : 'ghost',
+                variant: research && !formula ? 'default' : 'ghost',
                 children: [jsx(icons.Globe, {}), 'Researches the web']
+              }),
+              jsxs(Button, {
+                onClick: () => setFormula(true),
+                size: 'xs',
+                variant: formula ? 'default' : 'ghost',
+                children: [jsx(icons.Hash, {}), 'Formula']
               })
             ]
           }),
           jsx('div', {
             className: 'text-xs leading-relaxed',
             style: T.tertiary,
-            children: research
+            children: formula
+              ? `Computed here, no model call. Use {{column}} names, numbers, "text", + - * / ^ %, & to join text, comparisons, and ${Object.keys(FORMULA_FUNCTIONS).join(', ')}.`
+              : research
               ? `Every row gets its own Hermes agent that searches and reads pages, then returns a typed answer with its sources. Slower and costlier than a plain column: up to ${RESEARCH_CONCURRENCY} rows run at once and each stops after ${Math.round(RESEARCH_TIMEOUT_MS / 60000)} minutes. The agent is told to look things up only, and any tool that could change something is flagged on the cell.`
               : 'One fast model call per row, using only the row data. No browsing, no tools.'
           })
         ]
       }),
 
-      type === 'enum'
+      type === 'enum' && !formula
         ? jsx(Input, {
             onChange: event => setEnumText(event.target.value),
             placeholder: 'The allowed values, comma separated',
@@ -10183,7 +10739,9 @@ function ColumnForm({ columns, editing, onCancel, onSave, rows = [], selectedRow
                   jsx('span', {
                     className: 'text-xs leading-relaxed',
                     style: T.quaternary,
-                    children: 'Uses the real prompt and validator. The answer is not written to the grid.'
+                    children: formula
+                      ? 'Computes this row with your formula. Nothing is written to the grid.'
+                      : 'Uses the real prompt and validator. The answer is not written to the grid.'
                   })
                 ]
               }),
@@ -10247,7 +10805,7 @@ function ColumnForm({ columns, editing, onCancel, onSave, rows = [], selectedRow
                   jsx(Badge, {
                     size: 'xs',
                     variant: preview.ok ? 'default' : 'destructive',
-                    children: preview.ok ? typeLabel(type) : 'Rejected'
+                    children: preview.ok ? (formula ? 'Formula' : typeLabel(type)) : 'Rejected'
                   }),
                   jsxs('div', {
                     className: 'flex min-w-0 flex-1 flex-col gap-0.5',
@@ -10270,7 +10828,7 @@ function ColumnForm({ columns, editing, onCancel, onSave, rows = [], selectedRow
                       jsx('div', {
                         className: 'sheets-num text-xs',
                         style: T.quaternary,
-                        children: `${preview.calls} test call${preview.calls === 1 ? '' : 's'}${
+                        children: formula ? 'No model call · not saved' : `${preview.calls} test call${preview.calls === 1 ? '' : 's'}${
                           preview.steps ? ` · ${preview.steps} tool step${preview.steps === 1 ? '' : 's'}` : ''
                         } · ${formatDuration(preview.ms)} · not saved`
                       })
@@ -11725,8 +12283,39 @@ function cellText(column, text) {
   return text
 }
 
-function CellView({ column, onEdit, onRelease, row }) {
+/** Cells Hermes changed that nobody has touched since, keyed by the revision an
+ *  applied receipt stamped on them. Any later edit or fill gives the cell a new
+ *  revision, which drops the mark, and so does Restore. */
+function hermesMarks(receipts) {
+  const marks = new Map()
+
+  for (const receipt of Array.isArray(receipts) ? receipts : []) {
+    if (receipt?.restoredAt) {
+      continue
+    }
+
+    for (const change of receipt?.changes || []) {
+      if (change.appliedRevision) {
+        marks.set(change.appliedRevision, `Changed by Hermes: ${change.reason || receipt.summary || 'applied proposal'}`)
+      }
+    }
+  }
+
+  return marks
+}
+
+/** Choices a cell editor offers as a drop-down instead of free text. */
+function cellChoices(column) {
+  return column.type === 'yesno'
+    ? YESNO_CHOICES
+    : column.type === 'enum' && column.enumValues?.length
+      ? column.enumValues
+      : null
+}
+
+function CellView({ column, mark, onEdit, onRelease, row }) {
   const value = row.cells[column.id] || cell('empty', '')
+  const choices = cellChoices(column)
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
   const inputRef = useRef(null)
@@ -11738,13 +12327,26 @@ function CellView({ column, onEdit, onRelease, row }) {
   // the double-click was made in, and the browser can leave focus on <body>.
   // The result was an input that looked active and swallowed every keystroke.
   useEffect(() => {
-    if (editing && inputRef.current) {
-      inputRef.current.focus()
-      inputRef.current.select()
+    const node = inputRef.current
+
+    if (editing && node) {
+      node.focus()
+
+      if (node.tagName !== 'SELECT') {
+        node.select()
+      } else {
+        try {
+          node.showPicker?.()
+        } catch {}
+      }
     }
   }, [editing])
 
   const begin = () => {
+    if (column.formula) {
+      return
+    }
+
     setDraft(value.value)
     settled.current = false
     setEditing(true)
@@ -11763,6 +12365,30 @@ function CellView({ column, onEdit, onRelease, row }) {
   const abandon = () => {
     settled.current = true
     setEditing(false)
+  }
+
+  if (editing && choices) {
+    const options = draft && !choices.includes(draft) ? [draft, ...choices] : choices
+
+    return jsx('select', {
+      'aria-label': `${column.name} value`,
+      className: 'h-full w-full bg-transparent px-1 text-xs outline-none',
+      // Closing the list without a pick leaves a filled cell as Hermes filled it.
+      onBlur: event => (event.target.value === String(value.value ?? '') ? abandon() : commit(event.target.value)),
+      onChange: event => commit(event.target.value),
+      onKeyDown: event => {
+        event.stopPropagation()
+
+        if (event.key === 'Escape') {
+          event.preventDefault()
+          abandon()
+        }
+      },
+      ref: inputRef,
+      style: Object.assign({}, T.primary, { border: '1px solid var(--ui-accent)' }),
+      value: draft,
+      children: ['', ...options].map(option => jsx('option', { children: option || 'blank', value: option }, option))
+    })
   }
 
   if (editing) {
@@ -11852,6 +12478,14 @@ function CellView({ column, onEdit, onRelease, row }) {
         })
       ]
     })
+  } else if (choices) {
+    body = jsxs('span', {
+      className: 'flex min-w-0 flex-1 items-center gap-1',
+      children: [
+        jsx('span', { className: 'min-w-0 flex-1 truncate', children: cellText(column, value.value) }),
+        jsx(icons.ChevronDown, { className: 'sheets-pick size-3 shrink-0' })
+      ]
+    })
   } else {
     body = cellText(column, value.value)
   }
@@ -11863,9 +12497,9 @@ function CellView({ column, onEdit, onRelease, row }) {
   // the cell is dead space that looks clickable. tabIndex makes Enter/F2 a
   // keyboard path that doesn't depend on a double-click landing.
   return jsx('div', {
-    className: `sheets-cell flex h-full w-full cursor-text items-center truncate px-2 text-xs${
+    className: `sheets-cell flex h-full w-full ${column.formula ? 'cursor-default' : 'cursor-text'} items-center truncate px-2 text-xs${
       column.type === 'number' ? ' sheets-num' : ''
-    }${value.state === 'edited' ? ' sheets-edited' : ''}${
+    }${value.state === 'edited' ? ' sheets-edited' : ''}${mark ? ' sheets-hermes' : ''}${
       value.state === 'done' && value.landedAt && Date.now() - value.landedAt < LAND_WINDOW_MS ? ' sheets-land' : ''
     }`,
     onDoubleClick: begin,
@@ -11882,7 +12516,12 @@ function CellView({ column, onEdit, onRelease, row }) {
     role: 'gridcell',
     style: CELL_TONE[value.state] || T.primary,
     tabIndex: 0,
-    title: hint,
+    // An approved Hermes change is stored like a hand edit, so say who wrote it.
+    title: column.formula
+      ? `${value.state === 'failed' ? value.error : value.value || 'Blank'}\n\nComputed by =${column.formula}`
+      : mark
+        ? `${mark}\n${hint.replace('You wrote this', 'You approved this')}`
+        : hint,
     children: body
   })
 }
@@ -11962,7 +12601,8 @@ function Sheet({
   running,
   sort
 }) {
-  const rows = useValue($grid).rows
+  const { agentChanges, rows, totals } = useValue($grid)
+  const marks = useMemo(() => hermesMarks(agentChanges), [agentChanges])
   const outer = useRef(null)
   const scroller = useRef(null)
   const [scrollTop, setScrollTop] = useState(0)
@@ -12286,8 +12926,9 @@ function Sheet({
             className: 'flex min-w-0 items-center gap-1',
             children: [
               jsx(Tip, {
-                label:
-                  column.kind !== 'derived'
+                label: column.formula
+                  ? `Formula column: =${column.formula}\n\nComputed from each row. Click to sort.`
+                  : column.kind !== 'derived'
                     ? 'Imported column · click to sort'
                     : column.research
                       ? `Research column: each row runs its own Hermes agent with web tools.\n\n${column.prompt}`
@@ -12342,20 +12983,22 @@ function Sheet({
                     })
                   })
                 : null,
-              column.kind === 'derived'
+              column.kind === 'derived' || column.formula
                 ? jsxs('div', {
                     className: 'sheets-acts',
                     children: [
-                      jsx(Tip, {
-                        label: running ? 'A column is already filling' : 'Fill this column',
-                        children: jsx(Button, {
-                          disabled: running,
-                          onClick: () => onRun(column.id),
-                          size: 'icon-xs',
-                          variant: 'ghost',
-                          children: jsx(icons.Play, {})
-                        })
-                      }),
+                      column.formula
+                        ? null
+                        : jsx(Tip, {
+                            label: running ? 'A column is already filling' : 'Fill this column',
+                            children: jsx(Button, {
+                              disabled: running,
+                              onClick: () => onRun(column.id),
+                              size: 'icon-xs',
+                              variant: 'ghost',
+                              children: jsx(icons.Play, {})
+                            })
+                          }),
                       jsx(Tip, {
                         label: 'Edit the name, instruction, or answer shape',
                         children: jsx(Button, {
@@ -12404,9 +13047,38 @@ function Sheet({
                   style: T.quaternary,
                   children: typeLabel(column.type)
                 })
-              : null,
+              : column.formula
+                ? jsx('div', { className: 'sheets-num truncate text-[0.65rem]', style: T.quaternary, children: `=${column.formula}` })
+                : null,
 
           resizeHandle(column)
+        ]
+      },
+      column.id
+    )
+  }
+
+  // The totals row: a native select over each figure, so picking Sum, Average
+  // and the rest costs no menu of our own. Figures cover the rows on screen.
+  const totalCell = column => {
+    const kind = TOTALS[totals?.[column.id]] ? totals[column.id] : ''
+
+    return jsxs(
+      'label',
+      {
+        className: `sheets-total relative flex h-full items-center gap-1 px-2 text-xs${kind ? '' : ' sheets-total-empty'}`,
+        style: { flexShrink: 0, width: `${widthOf(column)}px` },
+        title: kind ? `${TOTALS[kind]} of the ${ordered.length} rows shown` : `Add a total for ${column.name}`,
+        children: [
+          jsx('span', { className: 'shrink-0', style: T.quaternary, children: kind ? TOTALS[kind] : 'Σ' }),
+          jsx('span', { className: 'sheets-num min-w-0 flex-1 truncate text-right font-medium', style: T.primary, children: kind ? columnTotal(kind, column, ordered) : '' }),
+          jsx('select', {
+            'aria-label': `Total for ${column.name}`,
+            className: 'absolute inset-0 cursor-pointer opacity-0',
+            onChange: event => setColumnTotal(column.id, event.target.value),
+            value: kind,
+            children: [['', 'No total'], ...Object.entries(TOTALS)].map(([key, label]) => jsx('option', { value: key, children: label }, key))
+          })
         ]
       },
       column.id
@@ -12441,6 +13113,7 @@ function Sheet({
               style: { flexShrink: 0, width: `${widthOf(column)}px` },
               children: jsx(CellView, {
                 column,
+                mark: marks.get(cellRevision(row.cells[column.id])),
                 onEdit: value => onEditCell(row.id, column.id, value),
                 onRelease: () => onReleaseCell(row.id, column.id),
                 row
@@ -12526,9 +13199,12 @@ function Sheet({
                   : `Nothing matches "${filter.trim()}"`
             })
           : jsx('div', {
-              className: 'min-h-0 flex-1 overflow-y-auto',
+              // Sized to its rows until they fill the pane, so the totals row
+              // sits right under a short grid instead of at the window's foot.
+              className: 'min-h-0 overflow-y-auto',
               onScroll: event => setScrollTop(event.currentTarget.scrollTop),
               ref: scroller,
+              style: { flex: '0 1 auto' },
               children: jsx('div', {
                 style: {
                   height: `${ordered.length * ROW_HEIGHT}px`,
@@ -12540,7 +13216,22 @@ function Sheet({
                   children: slice.map(bodyRow)
                 })
               })
+            }),
+        ordered.length > 0
+          ? jsxs('div', {
+              className: 'sheets-totals flex border-t',
+              style: Object.assign({ height: `${ROW_HEIGHT}px`, width: `${total + PICK_WIDTH}px` }, T.rule, T.head),
+              children: [
+                jsx('div', {
+                  className: 'grid place-items-center text-xs',
+                  style: Object.assign({ flexShrink: 0, width: `${PICK_WIDTH}px` }, T.quaternary),
+                  title: 'Totals. Pick one under any column.',
+                  children: 'Σ'
+                }),
+                ...columns.map(totalCell)
+              ]
             })
+          : null
           ]
         })
       }),
@@ -13140,8 +13831,11 @@ function ProposalReview({ applied, bare = false, busy, onApplied, proposal, stal
         ]
       }),
 
+      // Capped and scrollable: a chat may send 50 rows at once, and Apply below
+      // the list has to stay on screen.
       jsx('div', {
-        className: 'mt-2',
+        className: 'mt-2 overflow-y-auto',
+        style: { maxHeight: '40vh' },
         children: items.map(item => {
           const checked = selected.has(item.id) && !item.stale
 
@@ -14062,7 +14756,7 @@ function SheetsPage() {
 
   const save = useCallback(async () => {
     try {
-      const path = await exportCsv(grid.columns, grid.rows)
+      const path = await exportGrid(grid.columns, grid.rows, grid.name)
 
       if (path) {
         host.notify({ kind: 'success', message: `Saved ${path}` })
@@ -14330,7 +15024,7 @@ function SheetsPage() {
           jsx(RunSettings, { disabled: busy }),
 
           jsx(Tip, {
-            label: 'Export every row and column as CSV',
+            label: 'Export every row and column as Excel or CSV',
             children: jsx(Button, {
               onClick: () => void save(),
               size: 'icon-xs',
@@ -14387,6 +15081,8 @@ function SheetsPage() {
               if (editing) {
                 updateColumn(editing.id, {
                   enumValues: column.enumValues,
+                  formula: column.formula,
+                  kind: column.kind,
                   name: column.name,
                   prompt: column.prompt,
                   research: column.research,

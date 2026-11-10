@@ -72,6 +72,8 @@ def _column_view(column: dict) -> dict:
         out["prompt"] = column["prompt"]
     if column.get("research"):
         out["research"] = True
+    if column.get("formula"):
+        out["formula"] = column["formula"]
     return out
 
 
@@ -153,7 +155,8 @@ def sheets_list(args: dict, **_kw) -> str:
 READ_SCHEMA = {
     "name": "sheets_read",
     "description": "Read rows from one of the person's Sheets grids. Returns the columns (source columns are "
-                   "the person's data; generated columns are filled by a prompt, shown with it) and rows "
+                   "the person's data; generated columns are filled by a prompt, shown with it; formula columns are "
+                   "computed from the row by the formula shown) and rows "
                    "keyed by row id, which sheets_propose needs. Page through big grids with offset, or narrow "
                    "them with where/search. " + UNTRUSTED,
     "parameters": {
@@ -322,6 +325,9 @@ def sheets_propose(args: dict, **_kw) -> str:
             continue
         if not column:
             problems.append(f"cells[{i}]: no column {item.get('column')!r}")
+            continue
+        if column.get("kind") == "formula":
+            problems.append(f"cells[{i}]: {column.get('name')} is a formula column; Sheets computes its values")
             continue
         reason, bad = _reason(item, f"cells[{i}]")
         if bad:

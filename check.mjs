@@ -32,13 +32,13 @@ const src = fs.readFileSync(file, 'utf8')
 const problems = []
 const note = (label, detail) => problems.push(`${label}: ${detail}`)
 
-// 0. Size. Older Hermes Desktop shells refuse a plugin.js over 512 KiB
-// ("exceeds this shell's 512 KiB read limit"), so stay under it with room.
-const PLUGIN_MAX_BYTES = 512 * 1024
+// 0. Size. Hermes Desktop reads a plugin.js of up to 16 MiB in full (since
+// 0.21.6; Sheets needs 0.22.6). Shells older than that stopped at 512 KiB.
+const PLUGIN_MAX_BYTES = 16 * 1024 * 1024
 const bytes = Buffer.byteLength(src, 'utf8')
 
 if (bytes > PLUGIN_MAX_BYTES) {
-  note('size', `${bytes} bytes is over the 512 KiB limit older Hermes shells enforce`)
+  note('size', `${bytes} bytes is over the 16 MiB Hermes Desktop reads`)
 }
 
 // 1. Syntax - the loader gives a cryptic blob error, so catch it here.

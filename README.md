@@ -11,7 +11,7 @@
   Hermes reads the sheet, suggests the columns worth adding, and explains what the answers add up to.
   Any Hermes chat can read your grids too. You decide what runs, and nothing an agent writes lands until you approve it.
 
-  <sub>POWERED BY <a href="https://github.com/NousResearch/hermes-agent">HERMES AGENT</a> &nbsp;·&nbsp; COMMUNITY PLUGIN &nbsp;·&nbsp; VERSION 0.1.1</sub>
+  <sub>POWERED BY <a href="https://github.com/NousResearch/hermes-agent">HERMES AGENT</a> &nbsp;·&nbsp; COMMUNITY PLUGIN &nbsp;·&nbsp; VERSION 0.1.2</sub>
 
   <br /><br />
 
@@ -92,7 +92,7 @@ Untick anything you don't want, then apply the rest.
 
 Sheets writes the whole set or none of it. If a cell changed after the agent looked at it, that proposal is disabled. Cells you typed by hand are protected, and no later fill overwrites them.
 
-Every applied set becomes a receipt with the exact before and after values. **Restore** puts the cells back and takes added columns and rows out again, in one click. It stays disabled if anything has touched them since, including a fill of an added column, so it never erases newer work.
+Cells Hermes changed keep a thin outline, with the reason on hover, until you or a fill change them again. Every applied set becomes a receipt with the exact before and after values. **Restore** puts the cells back and takes added columns and rows out again, in one click. It stays disabled if anything has touched them since, including a fill of an added column, so it never erases newer work.
 
 ![A receipt for two applied cells, showing before and after values and an enabled restore](docs/assets/receipt.png)
 
@@ -126,7 +126,10 @@ Sheets handles the small things that make a sheet worth opening again:
 - A fill interrupted by a restart comes back as paused rows that resume where they stopped.
 - Saved views reopen a filter, sort, and handoff by name. Opening one changes nothing and costs nothing.
 - A grid can start from your Hermes chats, installed skills, scheduled jobs, or a folder you grant.
-- CSV export keeps research sources in a `<column>_sources` column next to each answer.
+- Export writes an Excel workbook or a CSV, whichever you name in the save dialog. Number columns stay numbers in Excel, and text that starts with `=` stays text. Both keep research sources in a `<column>_sources` column next to each answer.
+- Yes/no and choice columns edit from a drop-down of their allowed values.
+- **Formula** columns compute each row from its other columns with no model call, such as `{{price}} * {{quantity}}` or `IF({{urgency}} = "high", 3, 1)`. They use column names, not cell addresses, so sorting and new rows never break them. Functions: SUM, AVERAGE, MIN, MAX, COUNT, ROUND, ABS, IF, AND, OR, NOT, CONCAT, LEN, UPPER and LOWER.
+- The totals row under the grid shows a Sum, Average, Min, Max or Count for any column, over the rows on screen.
 - **Export JSON** writes one grid's audit, or the whole workspace, with every handoff, session, and receipt linked.
 - **Copy grid card** puts a `::sheets` card in a Hermes chat, which shows a live, compact view of that grid in the transcript.
 
@@ -181,9 +184,9 @@ Grids live in Hermes plugin storage on this desktop under `hermes.plugin.sheets.
 Two things reach past that storage, and each starts with a click from you.
 
 - **Hermes sessions with tools.** **Build sheet**, research columns, and **Ask** start hidden Hermes sessions that use your Hermes tools. They search and read third-party sites, and a research answer lists the pages it read. An approval prompt inside a build or research session is denied automatically, because nobody could see it.
-- **Files and folders you pick.** Import reads the one text or CSV file you choose in the system file dialog. Export writes the one CSV or JSON file you name there. The page hands that path to Sheets' own backend in Hermes, which reads or writes that file and refuses other file types and anything inside your Hermes home. The folder source reads text files in a folder you grant, up to 150 of them. Sheets itself reads and writes nothing else outside Hermes storage, runs no shell commands, and starts no background process.
+- **Files and folders you pick.** Import reads the one text or CSV file you choose in the system file dialog. Export writes the one Excel, CSV or JSON file you name there. The page hands that path to Sheets' own backend in Hermes, which reads or writes that file and refuses other file types and anything inside your Hermes home. The folder source reads text files in a folder you grant, up to 150 of them. Sheets itself reads and writes nothing else outside Hermes storage, runs no shell commands, and starts no background process.
 
-- **Read-back writes.** Sheets reads every save back before it reports success. A save that didn't land shows **Not saved**, with CSV export as the way out.
+- **Read-back writes.** Sheets reads every save back before it reports success. A save that didn't land shows **Not saved**, with export as the way out.
 - **Bounded context.** A column call sends one row: its imported columns, plus any generated column the prompt names. Findings send counts, not row text.
 - **Saved handoffs hold no data.** They store a name, an instruction, and the column names they need. Row values and answers stay in the grid.
 - **Proposals hold only what they change.** A chat's proposal stores the cells, columns, and rows it would change, plus what each cell held when the chat read it, so Sheets can tell when a value changed in the meantime.
@@ -204,7 +207,7 @@ It is checked by hand on macOS with Hermes Desktop 0.22.7. Windows and Linux use
 - Hermes gives plugins no way to delete sessions, so build, research, and Ask sessions stay hidden in your session store. That also keeps every answer's trace openable.
 - A proposal adds at most 5 columns, 50 rows, and 50 cell changes. Chats read up to 5,000 rows of a grid and up to 200 rows per call.
 - Chats only see your grids while Hermes Desktop is running with Sheets switched on, because the page writes the copies.
-- No `.xlsx` import and no formulas.
+- No `.xlsx` import and no cell formatting. Formulas work across one row's columns, not across rows or cell ranges. Excel export writes the computed values on one plain sheet.
 
 ## Development checks
 
@@ -215,7 +218,7 @@ python -m pytest tests/test_tools.py
 hermes plugins validate .
 ```
 
-`check.mjs` catches what a disk plugin can't survive: a stray import specifier, an icon the app doesn't ship, a hardcoded color, or a file over the size limit. The test suite runs the actual plugin against a simulated SDK and covers import, coercion, fills, research cells, insights, write-back, new columns and rows, chat proposals, receipts, and audit export. `tests/test_tools.py` covers the chat tools: reading, filters, the sharing switch, and how proposals are checked before they are sent. It also covers the backend that reads and writes a picked file.
+`check.mjs` catches what a disk plugin can't survive: a stray import specifier, an icon the app doesn't ship, a hardcoded color, or a file over the size limit. The test suite runs the actual plugin against a simulated SDK and covers import, coercion, fills, research cells, insights, write-back, new columns and rows, chat proposals, receipts, and audit export. `tests/test_tools.py` covers the chat tools: reading, filters, the sharing switch, and how proposals are checked before they are sent. It also covers the backend that reads and writes a picked file, including the Excel workbook it builds.
 
 The page uses only the Desktop SDK. It opens file dialogs with `ctx.os` and sends the picked path to its own backend with `ctx.rest`, so `hermes plugins validate` should pass with no note about the desktop bridge.
 

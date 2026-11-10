@@ -250,3 +250,62 @@ def test_picked_file_calls_protect_the_root_above_a_profile(tmp_path):
     auth = tmp_path / "auth.json"
     assert "Hermes home" in picked.write_text(str(auth), "{}", profile)["error"]
     assert not auth.exists()
+
+
+def _workbook_parts(path):
+    import zipfile
+    with zipfile.ZipFile(path) as archive:
+        return {name: archive.read(name).decode("utf-8") for name in archive.namelist()}
+
+
+def test_picked_workbook_is_a_valid_xlsx_with_numbers_and_safe_text(tmp_path, home):
+    outside = tmp_path.parent / f"{tmp_path.name}-xlsx"
+    outside.mkdir()
+    target = outside / "grid.xlsx"
+    sheet = {
+        "name": "Q3 / review [draft]",
+        "columns": [{"name": "company", "type": "text"}, {"name": "employees", "type": "number"},
+                    {"name": "note", "type": "text"}],
+        "rows": [["Acme & Co", "120", "=HYPERLINK(\"http://x\")"], ["Globex", "n/a", "bell\x07 <b>"], ["Short"]],
+    }
+
+    written = picked.write_xlsx(str(target), sheet, store.hermes_home())
+    assert written["ok"] is True and written["bytes"] > 0
+    parts = _workbook_parts(target)
+    assert set(parts) == {"[Content_Types].xml", "_rels/.rels", "xl/workbook.xml", "xl/_rels/workbook.xml.rels",
+                          "xl/styles.xml", "xl/worksheets/sheet1.xml"}
+    data = parts["xl/worksheets/sheet1.xml"]
+    assert '<c r="B2"><v>120</v></c>' in data
+    assert '<c r="B3" t="inlineStr"><is><t xml:space="preserve">n/a</t></is></c>' in data
+    assert "Acme &amp; Co" in data and "&lt;b&gt;" in data and "\x07" not in data
+    assert "<f>" not in data and "=HYPERLINK" in data
+    assert '<c r="A1" t="inlineStr" s="1">' in data and 'state="frozen"' in data
+    assert 'name="Q3   review  draft"' in parts["xl/workbook.xml"]
+
+    import xml.dom.minidom
+    for body in parts.values():
+        xml.dom.minidom.parseString(body)
+
+
+def test_picked_workbook_refuses_wrong_targets_and_empty_sheets(tmp_path, home):
+    outside = tmp_path.parent / f"{tmp_path.name}-xlsx-bad"
+    outside.mkdir()
+    sheet = {"name": "x", "columns": [{"name": "a"}], "rows": [["1"]]}
+    assert "only writes" in picked.write_xlsx(str(outside / "grid.csv"), sheet, store.hermes_home())["error"]
+    assert "Hermes home" in picked.write_xlsx(str(home / "grid.xlsx"), sheet, store.hermes_home())["error"]
+    assert picked.write_xlsx(str(outside / "grid.xlsx"), {"columns": [], "rows": []}, store.hermes_home())["ok"] is False
+    assert picked.write_xlsx(str(outside / "grid.xlsx"), None, store.hermes_home())["ok"] is False
+    assert picked._column_letter(0) == "A" and picked._column_letter(25) == "Z" and picked._column_letter(26) == "AA"
+
+
+def test_formula_columns_are_described_and_never_proposed():
+    grid = dict(GRID)
+    grid["columns"] = GRID["columns"] + [{"id": "c4", "name": "length", "kind": "formula", "type": "number",
+                                          "formula": "=LEN({{report}})"}]
+    store.Grids().put(grid)
+    read = call(tools.sheets_read, grid="g1abc")
+    assert read["columns"][3] == {"name": "length", "kind": "formula", "type": "number", "formula": "=LEN({{report}})"}
+    refused = call(tools.sheets_propose, grid="g1abc", summary="Fix length", cells=[
+        {"row": "r1", "column": "length", "value": "3", "reason": "Shorter"}])
+    assert refused["ok"] is False and "formula column" in json.dumps(refused)
+    assert inbox() == []

@@ -51,6 +51,14 @@ function loadWorkspace(responses = [], options = {}) {
         duplicateGrid,
         flushCellPatches,
         gridStorageKey,
+        cellChoices,
+        applyFormulas,
+        columnTotal,
+        compileFormula,
+        formulaColumnFromDraft,
+        setColumnTotal,
+        exportGrid,
+        hermesMarks,
         hydrateChatInbox,
         hydrateWorkspace,
         importFromFile,
@@ -58,6 +66,7 @@ function loadWorkspace(responses = [], options = {}) {
         mergeImportedRows,
         parseTable,
         patchCell,
+        removeColumn,
         previewColumn,
         queueCellPatch,
         releaseEditedCell,
@@ -5069,4 +5078,214 @@ test('chat access is off until the person turns it on', () => {
   assert.equal(runtime.$chatSharing.get(), true)
   runtime.hydrateChatInbox(makeStorage({ 'chat-sharing': false }))
   assert.equal(runtime.$chatSharing.get(), false)
+})
+
+test('marks only cells an unrestored receipt changed, keyed by the applied revision', () => {
+  const runtime = loadWorkspace()
+  const marks = runtime.hermesMarks([
+    { changes: [{ appliedRevision: 'rev-a', reason: 'Checkout is down' }, { appliedRevision: '', reason: 'x' }], summary: 'Fix urgency' },
+    { changes: [{ appliedRevision: 'rev-b', reason: 'Old' }], restoredAt: 5 },
+    { changes: [{ appliedRevision: 'rev-c' }], summary: 'Owners' }
+  ])
+
+  assert.equal(marks.get('rev-a'), 'Changed by Hermes: Checkout is down')
+  assert.equal(marks.has('rev-b'), false)
+  assert.equal(marks.has(''), false)
+  assert.equal(marks.get('rev-c'), 'Changed by Hermes: Owners')
+  assert.equal(runtime.hermesMarks(undefined).size, 0)
+})
+
+test('enum and yes/no cells edit from a list of their allowed values', () => {
+  const runtime = loadWorkspace()
+
+  assert.deepEqual(Array.from(runtime.cellChoices({ enumValues: ['high', 'low'], type: 'enum' })), ['high', 'low'])
+  assert.deepEqual(Array.from(runtime.cellChoices({ type: 'yesno' })), ['yes', 'no', 'unsure'])
+  assert.equal(runtime.cellChoices({ enumValues: [], type: 'enum' }), null)
+  assert.equal(runtime.cellChoices({ type: 'text' }), null)
+})
+
+test('exports an Excel workbook through the backend, with typed columns and research sources', async () => {
+  const calls = []
+  const runtime = loadWorkspace([], {
+    os: {
+      async pickSavePath(options) {
+        calls.push({ dialog: options })
+
+        return '/Users/me/Weekly.xlsx'
+      }
+    },
+    rest: async (route, request) => {
+      calls.push({ body: request.body, route })
+
+      return { ok: true, path: request.body.path }
+    }
+  })
+  const columns = [
+    { id: 'c1', kind: 'literal', name: 'company', type: 'text' },
+    { id: 'c2', kind: 'derived', name: 'employees', type: 'number' },
+    { id: 'c3', kind: 'derived', name: 'hq', research: true, type: 'text' }
+  ]
+  const rows = [
+    { cells: { c1: { value: 'Acme' }, c2: { value: '120' }, c3: { sources: ['https://a.example'], state: 'done', value: 'Oslo' } }, id: 'r1' }
+  ]
+  const path = await runtime.exportGrid(columns, rows, 'Weekly / review')
+
+  assert.equal(path, '/Users/me/Weekly.xlsx')
+  assert.equal(calls[0].dialog.defaultPath, 'weekly_review.xlsx')
+  assert.deepEqual(Array.from(calls[0].dialog.filters, filter => filter.extensions[0]), ['xlsx', 'csv'])
+  assert.equal(calls[1].route, '/picked-file/xlsx')
+  assert.equal(calls[1].body.sheet.name, 'Weekly / review')
+  assert.deepEqual(JSON.parse(JSON.stringify(calls[1].body.sheet.columns)), [
+    { name: 'company', type: 'text' },
+    { name: 'employees', type: 'number' },
+    { name: 'hq', type: 'text' },
+    { name: 'hq_sources', type: 'text' }
+  ])
+  assert.deepEqual(Array.from(calls[1].body.sheet.rows[0]), ['Acme', '120', 'Oslo', 'https://a.example'])
+})
+
+test('a .csv name in the export dialog still writes CSV text', async () => {
+  const calls = []
+  const runtime = loadWorkspace([], {
+    os: { pickSavePath: async () => '/Users/me/grid.csv' },
+    rest: async (route, request) => {
+      calls.push({ body: request.body, route })
+
+      return { ok: true, path: request.body.path }
+    }
+  })
+
+  await runtime.exportGrid([{ id: 'c1', name: 'a, b', type: 'text' }], [{ cells: { c1: { value: 'x' } }, id: 'r1' }], 'Grid')
+  assert.equal(calls[0].route, '/picked-file/write')
+  assert.equal(calls[0].body.text, '"a, b"\nx')
+})
+
+const runFormula = (runtime, source, values = {}) => runtime.compileFormula(source)(key => {
+  if (!(key in values)) {
+    throw new Error(`There is no column called {{${key}}}`)
+  }
+
+  return values[key]
+})
+
+test('formulas follow spreadsheet precedence and functions', () => {
+  const runtime = loadWorkspace()
+
+  assert.equal(runFormula(runtime, '=1 + 2 * 3'), 7)
+  assert.equal(runFormula(runtime, '(1 + 2) * 3'), 9)
+  assert.equal(runFormula(runtime, '2 ^ 3 ^ 2'), 64)
+  assert.equal(runFormula(runtime, '-2 ^ 2'), 4)
+  assert.equal(runFormula(runtime, '50%'), 0.5)
+  assert.equal(runFormula(runtime, '{{price}} * {{qty}}', { price: '$1,200.50', qty: '3' }), 3601.5)
+  assert.equal(runFormula(runtime, 'price * qty', { price: '2', qty: '4' }), 8)
+  assert.equal(runFormula(runtime, 'ROUND(2 / 3, 2)'), 0.67)
+  assert.equal(runFormula(runtime, 'round(1234.5, -2)'), 1200)
+  assert.equal(runFormula(runtime, 'SUM(1, "2", "x", 3)'), 6)
+  assert.equal(runFormula(runtime, 'AVERAGE(2, 4)'), 3)
+  assert.equal(runFormula(runtime, 'MAX(1, 9, 4) - MIN(1, 9, 4)'), 8)
+  assert.equal(runFormula(runtime, 'COUNT(1, "", "a", "7")'), 2)
+  assert.equal(runFormula(runtime, 'IF({{stars}} > 1000, "big", "small")', { stars: '34000' }), 'big')
+  assert.equal(runFormula(runtime, 'IF(AND({{a}} = "yes", NOT(FALSE)), 1, 0)', { a: 'YES' }), 1)
+  assert.equal(runFormula(runtime, 'UPPER({{name}}) & " (" & LEN({{name}}) & ")"', { name: 'acme' }), 'ACME (4)')
+  assert.equal(runFormula(runtime, '"say ""hi"""'), 'say "hi"')
+  assert.equal(runFormula(runtime, '{{blank}} + 1', { blank: '' }), 1)
+  assert.throws(() => runFormula(runtime, '1 / 0'), /Division by zero/)
+  assert.throws(() => runFormula(runtime, '{{name}} * 2', { name: 'acme' }), /"acme" is not a number/)
+  assert.throws(() => runtime.compileFormula('NOPE(1)'), /no NOPE function/)
+  assert.throws(() => runtime.compileFormula('(1 + 2'), /expected "\)"/)
+  assert.throws(() => runtime.compileFormula('1 +'), /ends early/)
+  assert.throws(() => runtime.compileFormula('1 2'), /Unexpected "2"/)
+  assert.throws(() => runtime.compileFormula(''), /Write a formula/)
+})
+
+test('formula columns recompute on every save, in dependency order, and flag loops', () => {
+  const runtime = loadWorkspace()
+
+  runtime.hydrateWorkspace(makeStorage())
+  runtime.setGrid({
+    ...runtime.$grid.get(),
+    columns: [
+      { id: 'c1', kind: 'literal', name: 'price', type: 'text' },
+      { id: 'c2', kind: 'literal', name: 'qty', type: 'text' },
+      { formula: '{{subtotal}} * 1.2', id: 'c4', kind: 'literal', name: 'with_tax', type: 'number' },
+      { formula: '{{price}} * {{qty}}', id: 'c3', kind: 'literal', name: 'subtotal', type: 'number' },
+      { id: 'c5', kind: 'derived', name: 'tier', prompt: 'Tier of {{price}}', type: 'text' },
+      { formula: 'IF({{tier}} = "gold", 1, 0)', id: 'c6', kind: 'literal', name: 'is_gold', type: 'number' },
+      { formula: '{{loop_b}} + 1', id: 'c7', kind: 'literal', name: 'loop_a', type: 'number' },
+      { formula: '{{loop_a}} + 1', id: 'c8', kind: 'literal', name: 'loop_b', type: 'number' }
+    ],
+    rows: [
+      { cells: { c1: { state: 'done', value: '10' }, c2: { state: 'done', value: '3' }, c5: { state: 'pending', value: '' } }, id: 'r1' },
+      { cells: { c1: { state: 'done', value: 'n/a' }, c2: { state: 'done', value: '1' }, c5: { state: 'done', value: 'gold' } }, id: 'r2' }
+    ]
+  })
+
+  let [r1, r2] = runtime.$grid.get().rows
+
+  assert.equal(r1.cells.c3.value, '30')
+  assert.equal(r1.cells.c4.value, '36')
+  assert.equal(r1.cells.c6.state, 'empty')
+  assert.equal(r2.cells.c3.state, 'failed')
+  assert.match(r2.cells.c3.error, /"n\/a" is not a number/)
+  assert.match(r2.cells.c4.error, /\{\{subtotal\}\} has an error/)
+  assert.equal(r2.cells.c6.value, '1')
+  assert.match(r1.cells.c7.error, /reads itself/)
+  assert.match(r1.cells.c8.error, /reads itself/)
+
+  const revision = r1.cells.c3.revision
+
+  runtime.patchCell('r1', 'c2', { state: 'edited', value: '5' })
+  r1 = runtime.$grid.get().rows[0]
+  assert.equal(r1.cells.c3.value, '50')
+  assert.equal(r1.cells.c4.value, '60')
+  assert.notEqual(r1.cells.c3.revision, revision)
+
+  const stable = runtime.$grid.get()
+
+  assert.equal(runtime.applyFormulas(stable), stable)
+
+  runtime.updateColumn('c1', { name: 'unit_price' })
+  assert.equal(runtime.$grid.get().columns.find(column => column.id === 'c3').formula, '{{unit_price}} * {{qty}}')
+  assert.equal(runtime.$grid.get().rows[0].cells.c3.value, '50')
+})
+
+test('a formula draft checks names, loops and types before it saves', () => {
+  const runtime = loadWorkspace()
+  const peers = [
+    { id: 'c1', kind: 'literal', name: 'price', type: 'text' },
+    { id: 'c2', kind: 'literal', name: 'company', type: 'text' }
+  ]
+  const rows = [{ cells: { c1: { value: '4' }, c2: { value: 'Acme' } }, id: 'r1' }]
+
+  const numeric = runtime.formulaColumnFromDraft({ name: 'double', peers, rows, source: '{{price}} * 2' })
+
+  assert.equal(numeric.column.kind, 'literal')
+  assert.equal(numeric.column.formula, '{{price}} * 2')
+  assert.equal(numeric.column.type, 'number')
+  assert.equal(runtime.formulaColumnFromDraft({ name: 'label', peers, rows, source: 'UPPER({{company}})' }).column.type, 'text')
+  assert.match(runtime.formulaColumnFromDraft({ name: 'x', peers, rows, source: '{{cost}} * 2' }).error, /no column called \{\{cost\}\}/)
+  assert.match(runtime.formulaColumnFromDraft({ name: 'x', peers, rows, source: '' }).error, /Write the formula/)
+  assert.match(runtime.formulaColumnFromDraft({ name: 'x', peers, rows, source: '2 +' }).error, /ends early/)
+})
+
+test('totals sum, average and count the rows shown, and drop with their column', () => {
+  const runtime = loadWorkspace()
+  const column = { id: 'c1', name: 'stars' }
+  const rows = ['1,000', '2000', '', 'n/a', '500.5'].map((value, index) => ({ cells: { c1: { value } }, id: `r${index}` }))
+
+  assert.equal(runtime.columnTotal('sum', column, rows), (3500.5).toLocaleString(undefined, { maximumFractionDigits: 2 }))
+  assert.equal(runtime.columnTotal('average', column, rows), (3500.5 / 3).toLocaleString(undefined, { maximumFractionDigits: 2 }))
+  assert.equal(runtime.columnTotal('min', column, rows), (500.5).toLocaleString(undefined, { maximumFractionDigits: 2 }))
+  assert.equal(runtime.columnTotal('count', column, rows), '4')
+  assert.equal(runtime.columnTotal('sum', column, []), '')
+
+  runtime.hydrateWorkspace(makeStorage())
+  runtime.setGrid({ ...runtime.$grid.get(), columns: [{ id: 'c1', kind: 'literal', name: 'stars', type: 'text' }], rows })
+  runtime.setColumnTotal('c1', 'sum')
+  assert.equal(runtime.$grid.get().totals.c1, 'sum')
+  runtime.setColumnTotal('c1', '')
+  assert.equal('c1' in runtime.$grid.get().totals, false)
+  runtime.setColumnTotal('c1', 'max')
+  runtime.removeColumn('c1')
+  assert.equal('c1' in runtime.$grid.get().totals, false)
 })

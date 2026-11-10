@@ -10,7 +10,7 @@ Sheets is the spreadsheet page in Hermes Desktop. It is not Google Sheets, and i
 ## Tools
 
 - `sheets_list`: their grids, with row counts and column names.
-- `sheets_read`: columns and rows of one grid. Source columns are their data. Generated columns are filled by a prompt, one model call per row, and come back with that prompt. Rows carry an id; `sheets_propose` needs it. Page through with `offset`, or narrow with `where` / `search`.
+- `sheets_read`: columns and rows of one grid. Source columns are their data. Generated columns are filled by a prompt, one model call per row, and come back with that prompt. Formula columns are computed from the row by the formula shown, so never propose values for them. Rows carry an id; `sheets_propose` needs it. Page through with `offset`, or narrow with `where` / `search`.
 - `sheets_propose`: send changes for review. Nothing changes until the person applies them in Sheets.
 - `sheets_create`: open a new grid from data you gathered. It never touches an existing grid.
 
