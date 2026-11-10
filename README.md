@@ -11,7 +11,7 @@
   Hermes reads the sheet, suggests the columns worth adding, and explains what the answers add up to.
   Any Hermes chat can read your grids too. You decide what runs, and nothing an agent writes lands until you approve it.
 
-  <sub>POWERED BY <a href="https://github.com/NousResearch/hermes-agent">HERMES AGENT</a> &nbsp;·&nbsp; COMMUNITY PLUGIN &nbsp;·&nbsp; VERSION 0.1.0</sub>
+  <sub>POWERED BY <a href="https://github.com/NousResearch/hermes-agent">HERMES AGENT</a> &nbsp;·&nbsp; COMMUNITY PLUGIN &nbsp;·&nbsp; VERSION 0.1.1</sub>
 
   <br /><br />
 
@@ -98,7 +98,7 @@ Every applied set becomes a receipt with the exact before and after values. **Re
 
 ## Ask about your sheet from any chat
 
-Sheets gives Hermes four tools, so you can talk about a sheet without opening it:
+Sheets gives Hermes four tools, so you can talk about a sheet without opening it. Chat access starts off. Turn on **Run settings › Chats can read my grids** first:
 
 - `sheets_list` and `sheets_read` read your grids, with filters and paging for big ones.
 - `sheets_propose` sends cell fixes, new columns, and new rows to a grid. They wait on that grid in Sheets, in the same review list as Ask, until you apply or dismiss them. A toast says when a suggestion arrives.
@@ -106,7 +106,7 @@ Sheets gives Hermes four tools, so you can talk about a sheet without opening it
 
 Ask a chat "which of my overnight reports need attention first?" and it reads the grid, answers in the chat, and suggests an owner column for you to review in Sheets. The `sheets:grids` skill teaches it to read before it answers, to treat cell text as data, and to leave every decision to you.
 
-Chats read a copy of each grid that Sheets keeps in Hermes plugin data while the page runs. **Run settings › Chats can read my grids** turns that off and deletes the copies, and the tools then tell the chat that access is off.
+While chat access is on, chats read a copy of each grid that Sheets keeps in Hermes plugin data while the page runs. Turning **Chats can read my grids** off deletes the copies. Until you turn it on, the tools tell the chat that access is off and how you can change that.
 
 ## When the answer isn't in the row, send an agent
 
@@ -172,16 +172,16 @@ Model calls apply your provider's normal usage costs.
 
 ```text
 Your Hermes Desktop  →  local grid storage  →  your configured Hermes models (only when you run something)
-                     ↘  a copy in Hermes plugin data (only while chats can read your grids)
+                     ↘  a copy in Hermes plugin data (only after you let chats read your grids)
                      ↘  the web, through your Hermes web tools (only when you build a sheet, run a research column, or use Ask)
 ```
 
-Grids live in Hermes plugin storage on this desktop under `hermes.plugin.sheets.*`, one key per grid. While **Chats can read my grids** is on, Sheets also keeps a copy of each grid under `plugin-data/sheets/` in your Hermes home, so the chat tools can read it. A chat sees a grid only when it calls one of those tools. Sheets has no server of its own, no telemetry, and no key handling.
+Grids live in Hermes plugin storage on this desktop under `hermes.plugin.sheets.*`, one key per grid. **Chats can read my grids** is off until you turn it on. While it is on, Sheets also keeps a copy of each grid under `plugin-data/sheets/` in your Hermes home, so the chat tools can read it. A chat sees a grid only when it calls one of those tools. Sheets has no server of its own, no telemetry, and no key handling.
 
 Two things reach past that storage, and each starts with a click from you.
 
 - **Hermes sessions with tools.** **Build sheet**, research columns, and **Ask** start hidden Hermes sessions that use your Hermes tools. They search and read third-party sites, and a research answer lists the pages it read. An approval prompt inside a build or research session is denied automatically, because nobody could see it.
-- **Files and folders you pick.** Import reads the one text or CSV file you choose in the system file dialog. Export writes the one file you name there. The folder source reads text files in a folder you grant, up to 150 of them. Sheets itself reads and writes nothing else outside Hermes storage, runs no shell commands, and starts no background process.
+- **Files and folders you pick.** Import reads the one text or CSV file you choose in the system file dialog. Export writes the one CSV or JSON file you name there. The page hands that path to Sheets' own backend in Hermes, which reads or writes that file and refuses other file types and anything inside your Hermes home. The folder source reads text files in a folder you grant, up to 150 of them. Sheets itself reads and writes nothing else outside Hermes storage, runs no shell commands, and starts no background process.
 
 - **Read-back writes.** Sheets reads every save back before it reports success. A save that didn't land shows **Not saved**, with CSV export as the way out.
 - **Bounded context.** A column call sends one row: its imported columns, plus any generated column the prompt names. Findings send counts, not row text.
@@ -215,9 +215,9 @@ python -m pytest tests/test_tools.py
 hermes plugins validate .
 ```
 
-`check.mjs` catches what a disk plugin can't survive: a stray import specifier, an icon the app doesn't ship, a hardcoded color, or a file over the size limit. The test suite runs the actual plugin against a simulated SDK and covers import, coercion, fills, research cells, insights, write-back, new columns and rows, chat proposals, receipts, and audit export. `tests/test_tools.py` covers the chat tools: reading, filters, the sharing switch, and how proposals are checked before they are sent.
+`check.mjs` catches what a disk plugin can't survive: a stray import specifier, an icon the app doesn't ship, a hardcoded color, or a file over the size limit. The test suite runs the actual plugin against a simulated SDK and covers import, coercion, fills, research cells, insights, write-back, new columns and rows, chat proposals, receipts, and audit export. `tests/test_tools.py` covers the chat tools: reading, filters, the sharing switch, and how proposals are checked before they are sent. It also covers the backend that reads and writes a picked file.
 
-`hermes plugins validate` should pass with one reviewer note about `pickedFileBridge`. It reads or writes only the single file the user just picked in a native dialog, because the SDK's `ctx.files` reaches only granted folders.
+The page uses only the Desktop SDK. It opens file dialogs with `ctx.os` and sends the picked path to its own backend with `ctx.rest`, so `hermes plugins validate` should pass with no note about the desktop bridge.
 
 <br />
 

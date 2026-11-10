@@ -17,10 +17,13 @@ function loadWorkspace(responses = [], options = {}) {
       // name the plugin uses.
       // ctx.os stand-in: register() normally assigns it.
       if (globalThis.__pluginOs) pluginOs = globalThis.__pluginOs
+      // ctx.rest stand-in, for the same reason.
+      if (globalThis.__pluginRest) pluginRest = globalThis.__pluginRest
 
       globalThis.__workspace = {
         // Stores and storage keys
         $ask,
+        $chatSharing,
         $grid,
         $handoffLibrary,
         $meter,
@@ -48,7 +51,9 @@ function loadWorkspace(responses = [], options = {}) {
         duplicateGrid,
         flushCellPatches,
         gridStorageKey,
+        hydrateChatInbox,
         hydrateWorkspace,
+        importFromFile,
         matchesReviewFilter,
         mergeImportedRows,
         parseTable,
@@ -229,7 +234,8 @@ function loadWorkspace(responses = [], options = {}) {
     setTimeout: () => 1,
     clearTimeout: () => undefined,
     window: options.window,
-    __pluginOs: options.os
+    __pluginOs: options.os,
+    __pluginRest: options.rest
   }
 
   context.globalThis = context
@@ -2120,6 +2126,7 @@ test('builds a versioned agent audit without exporting the full grid or internal
 test('exports the agent audit through the SDK save dialog', async () => {
   let selectedOptions
   let writtenPath
+  let writtenRoute
   let writtenText
   const runtime = loadWorkspace([], {
     os: {
@@ -2129,15 +2136,12 @@ test('exports the agent audit through the SDK save dialog', async () => {
         return 'C:\\Exports\\audit.json'
       }
     },
-    window: {
-      hermesDesktop: {
-        async writeTextFile(path, text) {
-          writtenPath = path
-          writtenText = text
+    rest: async (route, request) => {
+      writtenRoute = route
+      writtenPath = request.body.path
+      writtenText = request.body.text
 
-          return { path }
-        }
-      }
+      return { ok: true, path: request.body.path }
     }
   })
   const grid = {
@@ -2153,6 +2157,7 @@ test('exports the agent audit through the SDK save dialog', async () => {
   assert.equal(selectedOptions.defaultPath, 'sheets-weekly_audit-agent-audit.json')
   assert.equal(selectedOptions.title, 'Export agent audit')
   assert.deepEqual(Array.from(selectedOptions.filters[0].extensions), ['json'])
+  assert.equal(writtenRoute, '/picked-file/write')
   assert.equal(writtenPath, 'C:\\Exports\\audit.json')
   assert.equal(result.path, writtenPath)
   assert.equal(result.receipts, 0)
@@ -2404,6 +2409,7 @@ test('builds one run-and-receipt audit bundle for every workspace grid', () => {
 test('exports every saved grid audit through the SDK save dialog', async () => {
   let selectedOptions
   let writtenPath
+  let writtenRoute
   let writtenText
   const runtime = loadWorkspace([], {
     os: {
@@ -2413,15 +2419,12 @@ test('exports every saved grid audit through the SDK save dialog', async () => {
         return 'C:\\Exports\\workspace-audit.json'
       }
     },
-    window: {
-      hermesDesktop: {
-        async writeTextFile(path, text) {
-          writtenPath = path
-          writtenText = text
+    rest: async (route, request) => {
+      writtenRoute = route
+      writtenPath = request.body.path
+      writtenText = request.body.text
 
-          return { path }
-        }
-      }
+      return { ok: true, path: request.body.path }
     }
   })
   const first = { agentChanges: [], agentRuns: [], columns: [], id: 'grid-first', name: 'First', rows: [] }
@@ -2487,12 +2490,8 @@ test('blocks a partial workspace audit before opening the save dialog', async ()
         return 'C:\\Exports\\workspace-audit.json'
       }
     },
-    window: {
-      hermesDesktop: {
-        async writeTextFile() {
-          throw new Error('write should not run')
-        }
-      }
+    rest: async () => {
+      throw new Error('write should not run')
     }
   })
   const first = { agentChanges: [], columns: [], id: 'grid-first', name: 'First', rows: [] }
@@ -4992,4 +4991,82 @@ test('a build never replaces rows that arrived while it was working', async () =
   assert.equal(runtime.$grid.get().rows.length, 2)
   assert.equal(runtime.switchGrid(origin), true)
   assert.equal(runtime.$grid.get().rows[0].cells.c1.value, 'keep me')
+})
+
+test('imports the picked file through the plugin backend, never the desktop bridge', async () => {
+  const calls = []
+  const runtime = loadWorkspace([], {
+    os: {
+      async pickOpenPath() {
+        return '/Users/me/reports.csv'
+      }
+    },
+    rest: async (route, request) => {
+      calls.push({ body: request.body, method: request.method, route })
+
+      return { binary: false, ok: true, path: request.body.path, text: 'a,b\n1,2\n', truncated: false }
+    }
+  })
+  const file = await runtime.importFromFile()
+
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0].route, '/picked-file/read')
+  assert.equal(calls[0].method, 'POST')
+  assert.equal(calls[0].body.path, '/Users/me/reports.csv')
+  assert.equal(file.path, '/Users/me/reports.csv')
+  assert.equal(file.text, 'a,b\n1,2\n')
+  assert.equal(file.truncated, false)
+})
+
+test('import reports what the backend refused, and a cancelled dialog reads nothing', async () => {
+  let reads = 0
+  const refused = loadWorkspace([], {
+    os: { pickOpenPath: async () => '/Users/me/photo.png' },
+    rest: async () => {
+      reads += 1
+
+      return { error: 'Sheets only reads .csv, .tsv, .txt, .md, .log files.', ok: false }
+    }
+  })
+
+  await assert.rejects(refused.importFromFile(), /only reads/)
+  assert.equal(reads, 1)
+
+  const cancelled = loadWorkspace([], {
+    os: { pickOpenPath: async () => null },
+    rest: async () => {
+      throw new Error('read should not run')
+    }
+  })
+
+  assert.equal(await cancelled.importFromFile(), null)
+
+  const offline = loadWorkspace([], {
+    os: { pickOpenPath: async () => '/Users/me/reports.csv' },
+    rest: async () => {
+      throw new Error('404')
+    }
+  })
+
+  await assert.rejects(offline.importFromFile(), /backend isn't running/)
+})
+
+test('the page never reaches for the raw desktop bridge', () => {
+  const source = fs.readFileSync(new URL('../desktop/plugin.js', import.meta.url), 'utf8')
+
+  assert.equal(source.includes('hermesDesktop'), false)
+  assert.equal(source.includes('readFileText'), false)
+  assert.equal(source.includes('writeTextFile'), false)
+})
+
+test('chat access is off until the person turns it on', () => {
+  const runtime = loadWorkspace()
+
+  assert.equal(runtime.$chatSharing.get(), false)
+  runtime.hydrateChatInbox(makeStorage())
+  assert.equal(runtime.$chatSharing.get(), false)
+  runtime.hydrateChatInbox(makeStorage({ 'chat-sharing': true }))
+  assert.equal(runtime.$chatSharing.get(), true)
+  runtime.hydrateChatInbox(makeStorage({ 'chat-sharing': false }))
+  assert.equal(runtime.$chatSharing.get(), false)
 })

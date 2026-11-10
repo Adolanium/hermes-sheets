@@ -4,7 +4,7 @@ The Desktop page (desktop/plugin.js) is the spreadsheet. This package lets the a
 from any chat:
 
 - ``sheets_list`` / ``sheets_read``: read the person's grids (the page shares a copy while chat access
-  is on; Run settings > Chats can read my grids);
+  is on; it starts off, and the person turns it on in Run settings > Chats can read my grids);
 - ``sheets_propose``: send proposed cell changes, new columns and new rows to a grid. They wait in
   Sheets until the person reviews them; nothing is applied without a click, and applied sets can be
   restored;

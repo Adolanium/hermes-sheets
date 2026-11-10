@@ -66,7 +66,8 @@ const WRITEBACK_MAX_VALUE = 4000
 const PROPOSAL_MAX_COLUMNS = 5
 const PROPOSAL_MAX_ROWS = 50
 /** Chats read a copy of each grid that this page shares with the plugin's
- *  backend while chat access is on, and send proposals to its inbox. */
+ *  backend while chat access is on, and send proposals to its inbox. Chat
+ *  access starts off: the person turns it on in Run settings. */
 const CHAT_SHARING_KEY = 'chat-sharing'
 const CHAT_PROPOSALS_KEY = 'chat-proposals-v1'
 const CHAT_PROPOSALS_MAX = 30
@@ -4978,19 +4979,27 @@ function cancelRun() {
 // rows are worse than one fewer import route, and the truncation is server-side
 // so a plugin can't work around it. Pipe the command to a file and import that.
 
-// Dialogs go through the SDK (ctx.os.pickOpenPath / pickSavePath). Reading or
-// writing the one file the user just picked has no SDK route: ctx.files only
-// reaches the plugin's data folder and folders granted through its picker. So
-// this is Sheets' single raw desktop-bridge access, limited to readFileText and
-// writeTextFile on a path the user chose in a native dialog moments before.
-function pickedFileBridge() {
-  return typeof window === 'undefined' ? undefined : window.hermesDesktop
+// Dialogs go through the SDK (ctx.os.pickOpenPath / pickSavePath), and the
+// path they return goes to Sheets' own backend through ctx.rest, which reads or
+// writes that one file (picked.py). The page itself never touches the disk.
+async function pickedFile(action, body, fallback) {
+  let answer
+
+  try {
+    answer = await pluginRest(`/picked-file/${action}`, { body, method: 'POST' })
+  } catch {
+    throw new Error("Sheets' backend isn't running. Switch the Sheets plugin on in Capabilities > Plugins, then try again.")
+  }
+
+  if (!answer?.ok) {
+    throw new Error(answer?.error || fallback)
+  }
+
+  return answer
 }
 
 async function importFromFile() {
-  const files = pickedFileBridge()
-
-  if (!pluginOs?.pickOpenPath || !files?.readFileText) {
+  if (!pluginOs?.pickOpenPath || !pluginRest) {
     throw new Error('File picking is unavailable in this shell.')
   }
 
@@ -5004,20 +5013,18 @@ async function importFromFile() {
     return null
   }
 
-  const file = await files.readFileText(path)
+  const file = await pickedFile('read', { path }, 'Hermes could not read that file.')
 
-  if (file?.binary) {
+  if (file.binary) {
     throw new Error('That file is binary. Sheets imports text and CSV.')
   }
 
-  return { path, text: String(file?.text ?? ''), truncated: Boolean(file?.truncated) }
+  return { path, text: String(file.text ?? ''), truncated: Boolean(file.truncated) }
 }
 
 /** Save dialog, then write. Resolves the written path, or null on cancel. */
 async function saveTextFile(dialog, text) {
-  const files = pickedFileBridge()
-
-  if (!pluginOs?.pickSavePath || !files?.writeTextFile) {
+  if (!pluginOs?.pickSavePath || !pluginRest) {
     throw new Error('Saving is unavailable in this shell.')
   }
 
@@ -5027,9 +5034,9 @@ async function saveTextFile(dialog, text) {
     return null
   }
 
-  const written = await files.writeTextFile(path, text)
+  const written = await pickedFile('write', { path, text }, 'Hermes could not write that file.')
 
-  return written?.path || path
+  return written.path || path
 }
 
 function exportCsv(columns, rows) {
@@ -6793,7 +6800,7 @@ function applyWritebackProposal(proposal, changeIds) {
 // the same list as an Ask proposal. Nothing from a chat edits a grid.
 // ---------------------------------------------------------------------------
 
-const $chatSharing = atom(true)
+const $chatSharing = atom(false)
 /** Proposals from chats, waiting for review. Persisted, so a restart does not
  *  lose a suggestion nobody has looked at yet. */
 const $chatInbox = atom([])
@@ -6928,7 +6935,7 @@ function hydrateChatInbox(pluginStorage) {
   const saved = pluginStorage.get(CHAT_PROPOSALS_KEY, [])
 
   $chatInbox.set((Array.isArray(saved) ? saved : []).map(cleanChatProposal).filter(Boolean).slice(0, CHAT_PROPOSALS_MAX))
-  $chatSharing.set(pluginStorage.get(CHAT_SHARING_KEY, true) !== false)
+  $chatSharing.set(pluginStorage.get(CHAT_SHARING_KEY, false) === true)
 }
 
 function writeChatInbox(next) {
@@ -13811,7 +13818,7 @@ function ChatAccessSetting() {
             className: 'mt-1 block leading-relaxed',
             style: T.tertiary,
             children:
-              'Any Hermes chat can read your grids and suggest changes, which wait here for your review. While this is on, a copy of each grid is kept in Hermes plugin data on this computer. Turning it off deletes the copies.'
+              'Off until you turn it on. When on, any Hermes chat can read your grids and suggest changes, which wait here for your review, and a copy of each grid is kept in Hermes plugin data on this computer. Turning it off deletes the copies.'
           }),
           bridge === 'missing'
             ? jsx('span', {

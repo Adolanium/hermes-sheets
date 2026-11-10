@@ -22,7 +22,7 @@ def _package():
 
 
 _package()
-from hermes_sheets_under_test import store, tools  # noqa: E402
+from hermes_sheets_under_test import picked, store, tools  # noqa: E402
 
 GRID = {
     "id": "g1abc",
@@ -81,7 +81,7 @@ def test_list_and_read_by_name_with_filters():
 def test_turning_sharing_off_removes_copies_and_blocks_tools():
     store.Grids().set_sharing(False)
     assert store.Grids().all() == []
-    assert "turned off chat access" in call(tools.sheets_list)["error"]
+    assert "Chat access is off" in call(tools.sheets_list)["error"]
     assert call(tools.sheets_propose, grid="g1abc", summary="x", cells=[])["ok"] is False
 
 
@@ -184,3 +184,69 @@ def test_store_ids_are_checked():
     grids.put({**GRID, "id": "g2"})
     assert grids.prune(["g2"]) == 1
     assert [g["id"] for g in grids.all()] == ["g2"]
+
+
+def test_picked_file_read_is_limited_to_text_outside_hermes_home(tmp_path, home):
+    outside = tmp_path.parent / f"{tmp_path.name}-outside"
+    outside.mkdir()
+    sheet = outside / "reports.CSV"
+    sheet.write_bytes("a,b\r\n1,caf\u00e9\r\n".encode("utf-8"))
+
+    read = picked.read_text(str(sheet), store.hermes_home())
+    assert read["ok"] and read["text"] == "a,b\r\n1,caf\u00e9\r\n"
+    assert read["truncated"] is False and read["binary"] is False
+
+    big = outside / "big.csv"
+    big.write_bytes(b"x" * (picked.MAX_READ_BYTES + 1))
+    assert picked.read_text(str(big), store.hermes_home()) | {"bytes": 0} == {
+        "ok": True, "path": str(big), "text": "", "truncated": True, "binary": False, "bytes": 0}
+
+    blob = outside / "blob.txt"
+    blob.write_bytes(b"\x00\x01binary")
+    assert picked.read_text(str(blob), store.hermes_home())["binary"] is True
+
+    secret = outside / "id_rsa"
+    secret.write_text("key")
+    assert "only reads" in picked.read_text(str(secret), store.hermes_home())["error"]
+    assert picked.read_text("reports.csv", store.hermes_home())["ok"] is False
+    assert picked.read_text(None, store.hermes_home())["ok"] is False
+    assert picked.read_text(str(outside / "gone.csv"), store.hermes_home())["ok"] is False
+
+    inside = home / "logs.log"
+    inside.write_text("private")
+    assert "Hermes home" in picked.read_text(str(inside), store.hermes_home())["error"]
+
+    link = outside / "alias.csv"
+    try:
+        link.symlink_to(secret)
+    except OSError:
+        return
+    assert "only reads" in picked.read_text(str(link), store.hermes_home())["error"]
+
+
+def test_picked_file_write_is_limited_to_exports_outside_hermes_home(tmp_path, home):
+    outside = tmp_path.parent / f"{tmp_path.name}-exports"
+    outside.mkdir()
+    target = outside / "sheet.csv"
+
+    written = picked.write_text(str(target), "a,b\r\n1,2\r\n", store.hermes_home())
+    assert written == {"ok": True, "path": str(target), "bytes": 10}
+    assert target.read_bytes() == b"a,b\r\n1,2\r\n"
+
+    assert picked.write_text(str(outside / "audit.json"), "{}\n", store.hermes_home())["ok"] is True
+    assert "only writes" in picked.write_text(str(outside / "run.sh"), "x", store.hermes_home())["error"]
+    assert picked.write_text(str(outside / "missing" / "sheet.csv"), "x", store.hermes_home())["ok"] is False
+    assert picked.write_text(str(target), None, store.hermes_home())["ok"] is False
+    assert picked.write_text("sheet.csv", "x", store.hermes_home())["ok"] is False
+
+    config = home / "config.json"
+    assert "Hermes home" in picked.write_text(str(config), "{}", store.hermes_home())["error"]
+    assert not config.exists()
+
+
+def test_picked_file_calls_protect_the_root_above_a_profile(tmp_path):
+    profile = tmp_path / "profiles" / "work"
+    profile.mkdir(parents=True)
+    auth = tmp_path / "auth.json"
+    assert "Hermes home" in picked.write_text(str(auth), "{}", profile)["error"]
+    assert not auth.exists()

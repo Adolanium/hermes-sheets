@@ -32,6 +32,11 @@ def data_dir() -> Path:
         return path
 
 
+def hermes_home() -> Path:
+    """The Hermes home folder this plugin's data lives in."""
+    return data_dir().parent.parent
+
+
 def _write_json(path: Path, value) -> None:
     tmp = path.with_name(f".{path.name}.tmp")
     tmp.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")

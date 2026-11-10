@@ -49,16 +49,18 @@ def _err(message: str, **extra) -> str:
 def _not_shared() -> str | None:
     sharing = Grids().sharing()
     if sharing["known"] and not sharing["on"]:
-        return _err("The person has turned off chat access in Sheets (Run settings > Chats can read "
-                    "my grids). Ask them to turn it on if they want you to work with their sheets.")
+        return _err("Chat access is off in Sheets. It starts off, and the person turns it on in Sheets "
+                    "under Run settings > Chats can read my grids. Ask them to turn it on if they want "
+                    "you to work with their sheets.")
     return None
 
 
 def _no_grid(ref: str) -> str:
     names = [g.get("name") for g in Grids().all()][:20]
     if not names:
-        return _err("No Sheets grids are visible yet. The person needs to open Hermes Desktop with Sheets "
-                    "switched on; Sheets shares its grids with chats while it runs.")
+        return _err("No Sheets grids are visible yet. The person needs to open Sheets in Hermes Desktop "
+                    "and turn on Run settings > Chats can read my grids; Sheets shares its grids with "
+                    "chats while that is on.")
     return _err(f"No grid matches {ref!r}.", grids=names)
 
 
