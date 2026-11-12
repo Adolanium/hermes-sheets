@@ -1,5 +1,7 @@
 <div align="center">
 
+  <img src="docs/assets/nous-girl-folio.svg" width="96" height="96" alt="The Nous Girl, the Hermes Agent mark, in the Hermes Folio colours" />
+  &nbsp;&nbsp;
   <img src="docs/assets/icon/sheets-icon.png" width="96" height="96" alt="Sheets icon: a small sheet whose last column, the answers, is amber" />
 
   # Hermes Sheets
