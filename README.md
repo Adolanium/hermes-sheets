@@ -15,6 +15,8 @@
 
   <br /><br />
 
+  Part of [Hermes Folio](https://adolanium.github.io/hermes-folio/), with [Data](https://github.com/Adolanium/hermes-data) and [Whiteboard](https://github.com/Adolanium/hermes-whiteboard). Each works alone.
+
   [See it work](#a-sheet-with-an-agent-in-the-room) &nbsp;·&nbsp; [Install it](#make-it-yours) &nbsp;·&nbsp; [Understand the data](#privacy-you-can-explain-in-one-breath)
 
 </div>
