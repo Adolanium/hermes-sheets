@@ -42,10 +42,122 @@ import {
   Tip,
   TRANSCRIPT_DIRECTIVE_AREA,
   useGrabScroll,
+  usePluginI18n,
   useValue
 } from '@hermes/plugin-sdk'
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { jsx, jsxs } from 'react/jsx-runtime'
+
+// ---------------------------------------------------------------------------
+// Copy. The strings the page shows before you open anything live here and
+// follow the language Hermes is set to. English is the fallback for every key.
+// The bundles are written flat so they are easy to read and compare.
+// ---------------------------------------------------------------------------
+const MESSAGES = {
+  en: {
+    nav: 'Sheets',
+    openCommand: 'Open Sheets',
+    'start.title': 'Ask for a sheet. Or bring your own.',
+    'start.body': 'Describe the table you want and a Hermes agent finds the rows on the web, each with its source. Or drop in customer reports, tickets, leads, any rows you have. Either way Hermes reads the sheet and suggests the columns worth adding. You choose what runs, and every answer is typed, sortable, and one click from a Hermes agent.',
+    'build.placeholder': 'Describe a sheet. Hermes finds the rows.',
+    'build.go': 'Build sheet',
+    'build.try': 'Try:',
+    'build.note': 'One Hermes agent session searches the web and cites a source for every row. You see each step and can stop it.',
+    'import.title': 'Or start with your own sheet',
+    'import.body': 'Paste rows, or open an Excel workbook or a CSV. Hermes reads it and suggests columns; nothing runs until you choose.',
+    'import.placeholder': 'Customer feedback, tickets, files, messages, leads...\nOne item per line works.',
+    'import.go': 'Import rows',
+    'import.sample': 'Try 16 sample customer reports',
+    'proof.title': 'A prompt becomes a column',
+    'proof.note': 'illustrative data',
+    'reading.ask': 'Not sure what to ask of these rows?',
+    'reading.go': 'Let Hermes suggest columns',
+    'reading.note': 'One call. Nothing is added until you choose.',
+    'bar.runAll': 'Run all',
+    'bar.column': 'Column',
+    'bar.columnTip': 'Add a column whose definition is a prompt',
+    'bar.design': 'Design',
+    'bar.designTip': 'Turn one goal into a reviewable sequence of typed prompt columns',
+    'bar.insights': 'Insights',
+    'bar.insightsTip': 'See what the grid adds up to. Click a bar to work on just those rows.',
+    'bar.ask': 'Ask',
+    'bar.chart': 'Chart',
+    'bar.chartTip': 'Chart in Data: open the rows on screen as a report, where Hermes suggests the charts',
+    'bar.filter': 'Filter rows',
+    'bar.pin': 'Pin to board',
+    'fmt.highlight': 'Highlight',
+    'fmt.column': 'Column',
+    'fmt.row': 'Row',
+    'fmt.clear': 'Clear',
+    'fmt.hint': 'Click a cell to format it. Shift-click picks a block.'
+  },
+  zh: {
+    nav: '表格',
+    openCommand: '打开表格',
+    'start.title': '要一张表，或者带上你自己的。',
+    'start.body': '描述你想要的表格，Hermes agent 会在网上找到各行，并为每行附上来源。也可以放入客户反馈、工单、线索，任何你已有的行。无论哪种方式，Hermes 都会读取表格并建议值得添加的列。运行什么由你决定，每个答案都有类型、可以排序，并且一键就能交给 Hermes agent。',
+    'build.placeholder': '描述一张表，Hermes 来找行。',
+    'build.go': '生成表格',
+    'build.try': '试试：',
+    'build.note': '一个 Hermes agent 会话搜索网络，并为每一行注明来源。每一步你都看得到，也可以随时停止。',
+    'import.title': '或者从你自己的表格开始',
+    'import.body': '粘贴各行，或者打开 Excel 工作簿或 CSV。Hermes 读取后会建议列；在你选择之前什么都不会运行。',
+    'import.placeholder': '客户反馈、工单、文件、消息、线索……\n每行一条即可。',
+    'import.go': '导入各行',
+    'import.sample': '试试 16 条示例客户反馈',
+    'proof.title': '一个提示变成一列',
+    'proof.note': '示意数据',
+    'reading.ask': '不确定该问这些行什么？',
+    'reading.go': '让 Hermes 建议列',
+    'reading.note': '只调用一次。在你选择之前不会添加任何东西。',
+    'bar.runAll': '全部运行',
+    'bar.column': '列',
+    'bar.columnTip': '添加一个由提示定义的列',
+    'bar.design': '设计',
+    'bar.designTip': '把一个目标变成一组可以审阅的、带类型的提示列',
+    'bar.insights': '洞察',
+    'bar.insightsTip': '看看整张表汇总出什么。点击某个条形，只处理那些行。',
+    'bar.ask': '提问',
+    'bar.chart': '图表',
+    'bar.chartTip': '在 Data 中绘图：把屏幕上的行作为报告打开，由 Hermes 建议图表',
+    'bar.filter': '筛选行',
+    'bar.pin': '钉到白板',
+    'fmt.highlight': '高亮',
+    'fmt.column': '整列',
+    'fmt.row': '整行',
+    'fmt.clear': '清除',
+    'fmt.hint': '点击单元格设置格式。按住 Shift 点击可以选中一块。'
+  }
+}
+
+/** Hermes looks a key up as a path into a nested tree (`empty.title` is
+ *  `{ empty: { title } }`), so a flat bundle is turned into that tree when it
+ *  is registered. A key may not be both a message and the start of a longer key. */
+function messageTree(flat) {
+  const tree = {}
+
+  for (const [key, value] of Object.entries(flat)) {
+    const parts = key.split('.')
+    let node = tree
+
+    for (const part of parts.slice(0, -1)) {
+      node[part] = node[part] && typeof node[part] === 'object' ? node[part] : {}
+      node = node[part]
+    }
+
+    node[parts.at(-1)] = value
+  }
+
+  return tree
+}
+
+/** Module-level translator, for labels read once at registration and for code
+ *  outside React. Until Hermes hands over its own, it answers in English. */
+let tr = (key, ...args) => {
+  const value = MESSAGES.en[key]
+
+  return typeof value === 'function' ? value(...args) : (value ?? key)
+}
 
 const ROUTE = '/sheets'
 const LEGACY_GRID_KEY = 'grid'
@@ -10512,6 +10624,7 @@ function loadStarter(starter) {
 }
 
 function ProofGrid() {
+  const t = usePluginI18n('sheets')
   const rows = [
     ['Refund took twelve days', 'billing', 'yes'],
     ['Bulk edit saved me an hour', 'praise', 'no'],
@@ -10526,8 +10639,8 @@ function ProofGrid() {
         className: 'flex items-center justify-between border-b px-3 py-2.5',
         style: T.rule,
         children: [
-          jsx('span', { className: 'text-xs font-medium', style: T.secondary, children: 'A prompt becomes a column' }),
-          jsx('span', { className: 'text-xs', style: T.quaternary, children: 'illustrative data' })
+          jsx('span', { className: 'text-xs font-medium', style: T.secondary, children: t('proof.title') }),
+          jsx('span', { className: 'text-xs', style: T.quaternary, children: t('proof.note') })
         ]
       }),
       jsxs('div', {
@@ -10717,6 +10830,7 @@ const BUILD_EXAMPLES = [
  *  session it starts. State lives in $build, so leaving the page and coming
  *  back shows the same run. */
 function BuildBox() {
+  const t = usePluginI18n('sheets')
   const build = useValue($build)
   const [text, setText] = useState('')
 
@@ -10790,7 +10904,7 @@ function BuildBox() {
                 go()
               }
             },
-            placeholder: 'Describe a sheet. Hermes finds the rows.',
+            placeholder: t('build.placeholder'),
             value: text
           }),
           jsxs(Button, {
@@ -10798,14 +10912,14 @@ function BuildBox() {
             onClick: go,
             size: 'sm',
             variant: 'default',
-            children: [jsx(icons.ArrowUp, {}), 'Build sheet']
+            children: [jsx(icons.ArrowUp, {}), t('build.go')]
           })
         ]
       }),
       jsxs('div', {
         className: 'flex flex-wrap items-center gap-1.5 text-xs',
         children: [
-          jsx('span', { className: 'pr-0.5', style: T.quaternary, children: 'Try:' }),
+          jsx('span', { className: 'pr-0.5', style: T.quaternary, children: t('build.try') }),
           ...BUILD_EXAMPLES.map(example =>
             jsx('button', { className: 'sheets-build-example', onClick: () => setText(example), type: 'button', children: example }, example)
           )
@@ -10820,13 +10934,14 @@ function BuildBox() {
         : jsx('div', {
             className: 'text-xs',
             style: T.quaternary,
-            children: 'One Hermes agent session searches the web and cites a source for every row. You see each step and can stop it.'
+            children: t('build.note')
           })
     ]
   })
 }
 
 function ImportPanel() {
+  const t = usePluginI18n('sheets')
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState('')
@@ -10897,13 +11012,13 @@ function ImportPanel() {
             jsx('h1', {
               className: 'sheets-start-title font-medium',
               style: T.primary,
-              children: 'Ask for a sheet. Or bring your own.'
+              children: t('start.title')
             }),
             jsx('p', {
               className: 'text-sm leading-relaxed',
               style: T.tertiary,
               children:
-                'Describe the table you want and a Hermes agent finds the rows on the web, each with its source. Or drop in customer reports, tickets, leads, any rows you have. Either way Hermes reads the sheet and suggests the columns worth adding. You choose what runs, and every answer is typed, sortable, and one click from a Hermes agent.'
+                t('start.body')
             })
           ]
         }),
@@ -10919,17 +11034,17 @@ function ImportPanel() {
                 jsxs('div', {
                   className: 'flex flex-col gap-1',
                   children: [
-                    jsx('h2', { className: 'text-sm font-medium', style: T.primary, children: 'Or start with your own sheet' }),
+                    jsx('h2', { className: 'text-sm font-medium', style: T.primary, children: t('import.title') }),
                     jsx('p', {
                       className: 'text-xs leading-relaxed',
                       style: T.tertiary,
-                      children: 'Paste rows, or open an Excel workbook or a CSV. Hermes reads it and suggests columns; nothing runs until you choose.'
+                      children: t('import.body')
                     })
                   ]
                 }),
                 jsx(Textarea, {
                   onChange: event => setText(event.target.value),
-                  placeholder: 'Customer feedback, tickets, files, messages, leads...\nOne item per line works.',
+                  placeholder: t('import.placeholder'),
                   rows: 7,
                   value: text
                 }),
@@ -10941,7 +11056,7 @@ function ImportPanel() {
                       onClick: () => commit(text),
                       size: 'sm',
                       variant: 'default',
-                      children: 'Import rows'
+                      children: t('import.go')
                     }),
                     jsx(Button, {
                       disabled: busy,
@@ -10956,7 +11071,7 @@ function ImportPanel() {
                       onClick: loadSampleReports,
                       size: 'sm',
                       variant: 'ghost',
-                      children: [jsx(icons.Brain, {}), 'Try 16 sample customer reports']
+                      children: [jsx(icons.Brain, {}), t('import.sample')]
                     })
                   ]
                 }),
@@ -12767,6 +12882,7 @@ function InsightBoard({ focus, onFocusColumn, onSetFocus }) {
  *  column with why it helps. Nothing happens until the user picks and clicks;
  *  the fill button names its exact call count. */
 function SheetReadingPanel({ grid, running }) {
+  const t = usePluginI18n('sheets')
   const reading = useValue($reading)
   const [picked, setPicked] = useState(() => new Set())
   const derivedCount = grid.columns.filter(column => column.kind === 'derived').length
@@ -12787,14 +12903,14 @@ function SheetReadingPanel({ grid, running }) {
       style: T.rule,
       children: [
         jsx(icons.Brain, { className: 'size-3.5 shrink-0', style: T.accent }),
-        jsx('span', { style: T.secondary, children: 'Not sure what to ask of these rows?' }),
+        jsx('span', { style: T.secondary, children: t('reading.ask') }),
         jsxs(Button, {
           onClick: () => void readSheet(),
           size: 'xs',
           variant: 'secondary',
-          children: [jsx(icons.Brain, {}), 'Let Hermes suggest columns']
+          children: [jsx(icons.Brain, {}), t('reading.go')]
         }),
-        jsx('span', { style: T.quaternary, children: 'One call. Nothing is added until you choose.' })
+        jsx('span', { style: T.quaternary, children: t('reading.note') })
       ]
     })
   }
@@ -15748,6 +15864,7 @@ function PaintMenu({ children, disabled, label, onPick, shade, value }) {
 }
 
 function RulesMenu({ columns, defaultColumnId, rules }) {
+  const t = usePluginI18n('sheets')
   const ideas = useValue($ruleIdeas)
   const [draft, setDraft] = useState({ columnId: '', fill: 'yellow', op: 'lt', row: false, value: '' })
   const columnId = columns.some(column => column.id === draft.columnId) ? draft.columnId : defaultColumnId || columns[0]?.id || ''
@@ -15817,7 +15934,7 @@ function RulesMenu({ columns, defaultColumnId, rules }) {
               className: 'sheets-fmt-rows',
               children: [jsx('i', {}), jsx('i', { style: { background: PAINTS.yellow.fill, borderColor: PAINTS.yellow.ink } }), jsx('i', {})]
             }),
-            'Highlight',
+            t('fmt.highlight'),
             rules.length > 0 ? jsx('span', { className: 'sheets-fmt-count sheets-num', children: String(rules.length) }) : null
           ]
         })
@@ -15945,6 +16062,7 @@ function RulesMenu({ columns, defaultColumnId, rules }) {
 }
 
 function FormatBar({ visibleIds }) {
+  const t = usePluginI18n('sheets')
   const grid = useValue($grid)
   const picked = useValue($cells)
   const rules = Array.isArray(grid.rules) ? grid.rules : []
@@ -16071,12 +16189,12 @@ function FormatBar({ visibleIds }) {
       sep('d'),
       jsx(RulesMenu, { columns: grid.columns, defaultColumnId: column?.id, rules }),
       sep('e'),
-      button('Stretch the pick over the whole column', undefined, () => $cells.set({ ...picked, columnIds: live.columnIds, rowIds: visibleIds }), 'Column', !any || visibleIds.length === 0),
-      button('Stretch the pick over the whole row', undefined, () => $cells.set({ ...picked, columnIds: grid.columns.map(entry => entry.id), rowIds: live.rowIds }), 'Row'),
-      button('Clear bold, italic, colours and alignment', undefined, () => clearLook(live), 'Clear'),
+      button('Stretch the pick over the whole column', undefined, () => $cells.set({ ...picked, columnIds: live.columnIds, rowIds: visibleIds }), t('fmt.column'), !any || visibleIds.length === 0),
+      button('Stretch the pick over the whole row', undefined, () => $cells.set({ ...picked, columnIds: grid.columns.map(entry => entry.id), rowIds: live.rowIds }), t('fmt.row')),
+      button('Clear bold, italic, colours and alignment', undefined, () => clearLook(live), t('fmt.clear')),
       jsx('span', {
         className: 'sheets-fmt-hint sheets-num',
-        children: !any ? 'Click a cell to format it. Shift-click picks a block.' : count === 1 ? column?.name || '' : `${live.rowIds.length.toLocaleString('en-US')} × ${live.columnIds.length} cells`
+        children: !any ? t('fmt.hint') : count === 1 ? column?.name || '' : `${live.rowIds.length.toLocaleString('en-US')} × ${live.columnIds.length} cells`
       })
     ]
   })
@@ -16116,6 +16234,7 @@ function SheetChooser() {
 }
 
 function SheetsPage() {
+  const t = usePluginI18n('sheets')
   const grid = useValue($grid)
   const run = useValue($run)
   const pipeline = useValue($pipeline)
@@ -16415,7 +16534,7 @@ function SheetsPage() {
                   peers.includes('whiteboard')
                     ? jsx(Tip, {
                         label: selection.length > 24 ? 'Pin to board takes up to 24 rows at a time' : 'Pin these rows to your open board in Whiteboard, one note each',
-                        children: jsx(Button, { disabled: selection.length > 24, onClick: pin, size: 'xs', variant: 'secondary', children: 'Pin to board' })
+                        children: jsx(Button, { disabled: selection.length > 24, onClick: pin, size: 'xs', variant: 'secondary', children: t('bar.pin') })
                       })
                     : null
                 ]
@@ -16428,10 +16547,10 @@ function SheetsPage() {
             ? jsx('div', {
                 style: { width: '8rem' },
                 children: jsx(SearchField, {
-                  'aria-label': 'Filter rows',
+                  'aria-label': t('bar.filter'),
                   onChange: setFilter,
                   onClear: () => setFilter(''),
-                  placeholder: 'Filter rows',
+                  placeholder: t('bar.filter'),
                   value: filter
                 })
               })
@@ -16462,12 +16581,12 @@ function SheetsPage() {
               onClick: () => void onRunAll(),
               size: 'xs',
               variant: 'default',
-              children: [jsx(icons.Zap, {}), 'Run all']
+              children: [jsx(icons.Zap, {}), t('bar.runAll')]
             })
           }),
 
           jsx(Tip, {
-            label: 'Add a column whose definition is a prompt',
+            label: t('bar.columnTip'),
             children: jsxs(Button, {
               disabled: busy,
               onClick: () => {
@@ -16478,12 +16597,12 @@ function SheetsPage() {
               },
               size: 'xs',
               variant: 'secondary',
-              children: [jsx(icons.Plus, {}), 'Column']
+              children: [jsx(icons.Plus, {}), t('bar.column')]
             })
           }),
 
           jsx(Tip, {
-            label: 'Turn one goal into a reviewable sequence of typed prompt columns',
+            label: t('bar.designTip'),
             children: jsxs(Button, {
               disabled: busy,
               onClick: () => {
@@ -16494,17 +16613,17 @@ function SheetsPage() {
               },
               size: 'xs',
               variant: designing ? 'default' : 'secondary',
-              children: [jsx(icons.Activity, {}), 'Design']
+              children: [jsx(icons.Activity, {}), t('bar.design')]
             })
           }),
 
           jsx(Tip, {
-            label: 'See what the grid adds up to. Click a bar to work on just those rows.',
+            label: t('bar.insightsTip'),
             children: jsxs(Button, {
               onClick: () => setInsights(open => !open),
               size: 'xs',
               variant: insights ? 'default' : 'secondary',
-              children: [jsx(icons.BarChart3, {}), 'Insights']
+              children: [jsx(icons.BarChart3, {}), t('bar.insights')]
             })
           }),
 
@@ -16520,7 +16639,7 @@ function SheetsPage() {
               variant: ask.open ? 'default' : 'secondary',
               children: [
                 jsx(icons.MessageQuestion, {}),
-                'Ask',
+                t('bar.ask'),
                 handoffLibrary.recipes.length > 0
                   ? jsx('span', {
                       className: 'sheets-num',
@@ -16582,14 +16701,14 @@ function SheetsPage() {
 
           peers.includes('data')
             ? jsx(Tip, {
-                label: 'Chart in Data: open the rows on screen as a report, where Hermes suggests the charts',
+                label: t('bar.chartTip'),
                 children: jsxs(Button, {
                   className: 'sheets-gold',
                   disabled: busy,
                   onClick: chart,
                   size: 'xs',
                   variant: 'secondary',
-                  children: [jsx(icons.BarChart3, {}), 'Chart']
+                  children: [jsx(icons.BarChart3, {}), t('bar.chart')]
                 })
               })
             : null,
@@ -16757,6 +16876,11 @@ export default {
   name: 'Sheets',
   description: 'An agentic spreadsheet. Ask for a sheet or bring your own, and Hermes answers in every column.',
   register(ctx) {
+    if (ctx.i18n) {
+      ctx.i18n.register(Object.fromEntries(Object.entries(MESSAGES).map(([locale, flat]) => [locale, messageTree(flat)])))
+      tr = ctx.i18n.t
+    }
+
     storage = ctx.storage
     pluginOs = ctx.os
     pluginFiles = ctx.files ?? null
@@ -16801,11 +16925,11 @@ export default {
       pluginFiles = null
     })
 
-    ctx.registerMany([
+    const registerLabels = () => ctx.registerMany([
       {
         id: 'page',
         area: ROUTES_AREA,
-        title: 'Sheets',
+        title: tr('nav'),
         data: { path: ROUTE },
         render: () => jsx(SheetsPage, {})
       },
@@ -16820,14 +16944,14 @@ export default {
       {
         id: 'nav',
         area: SIDEBAR_NAV_AREA,
-        data: { codicon: 'table', label: 'Sheets', path: ROUTE }
+        data: { codicon: 'table', label: tr('nav'), path: ROUTE }
       },
       {
         id: 'open',
         area: PALETTE_AREA,
         data: {
           id: 'sheets.open',
-          label: 'Open Sheets',
+          label: tr('openCommand'),
           keywords: ['sheets', 'grid', 'table', 'batch', 'column'],
           run: () => host.navigate(ROUTE)
         }
@@ -16843,5 +16967,16 @@ export default {
         }
       }
     ])
+
+    let disposeLabels = registerLabels()
+
+    // The sidebar and the palette read these once, so rebuild them when the language changes.
+    ctx.i18n?.onLocaleChange?.(() => {
+      if (typeof disposeLabels === 'function') {
+        disposeLabels()
+      }
+
+      disposeLabels = registerLabels()
+    })
   }
 }
