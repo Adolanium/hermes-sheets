@@ -70,6 +70,7 @@ function loadWorkspace(responses = [], options = {}) {
         clearLook,
         decideRuleIdea,
         exportLooks,
+        fileGridName,
         fileTableHint,
         formatValue,
         nudgeDecimals,
@@ -5394,9 +5395,9 @@ test('bold, italic, colours and alignment go on the picked cells, toggle, and cl
   const look = runtime.cellLook({ color: 'x' }, { b: 1, f: 'yellow' }, 'red', { id: 'c2', format: { kind: 'number' } })
 
   assert.equal(look.fontWeight, 700)
-  assert.match(look.background, /^hsl\(48 /)
+  assert.match(look.backgroundColor, /^hsl\(48 /)
   assert.equal(look.justifyContent, 'flex-end')
-  assert.match(runtime.cellLook({}, null, 'red', { id: 'c1' }).background, /^hsl\(4 /)
+  assert.match(runtime.cellLook({}, null, 'red', { id: 'c1' }).backgroundColor, /^hsl\(4 /)
 
   // A deleted row takes its looks with it when the grid is stored.
   runtime.setGrid({ ...runtime.$grid.get(), rows: runtime.$grid.get().rows.slice(1) })
@@ -5553,6 +5554,9 @@ test('an Excel workbook imports through the backend, one sheet at a time', async
   assert.equal(file.text, 'note\n"He said ""hi"", twice"')
   assert.equal(runtime.$sheetAsk.get(), null)
   assert.equal(runtime.fileTableHint(file.path), 'csv')
+  assert.equal(runtime.fileGridName('/Users/me/cart-menu_2026.xlsx'), 'Cart menu 2026')
+  assert.equal(runtime.fileGridName('C:\\data\\Q3.csv'), 'Q3')
+  assert.equal(runtime.fileGridName(''), '')
 
   const again = runtime.importFromFile()
 

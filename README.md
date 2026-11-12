@@ -11,7 +11,7 @@
   Hermes reads the sheet, suggests the columns worth adding, and explains what the answers add up to.
   Any Hermes chat can read your grids too. You decide what runs, and nothing an agent writes lands until you approve it.
 
-  <sub>POWERED BY <a href="https://github.com/NousResearch/hermes-agent">HERMES AGENT</a> &nbsp;·&nbsp; COMMUNITY PLUGIN &nbsp;·&nbsp; VERSION 0.1.4</sub>
+  <sub>POWERED BY <a href="https://github.com/NousResearch/hermes-agent">HERMES AGENT</a> &nbsp;·&nbsp; COMMUNITY PLUGIN &nbsp;·&nbsp; VERSION 0.1.5</sub>
 
   <br /><br />
 

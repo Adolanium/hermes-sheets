@@ -1,5 +1,5 @@
 name: sheets
-version: "0.1.4"
+version: "0.1.5"
 description: "An agentic spreadsheet. Ask for a sheet and a Hermes agent finds the rows on the web, each with its source, or bring your own. Hermes suggests typed columns, fills only the ones you pick, explains what the answers add up to, and, once you allow it, lets any chat read your grids and propose cells, columns and rows that you approve and can undo. Formula columns, a totals row, cell formatting with highlight rules, and Excel import and export are built in."
 author: Adolanium
 license: MIT

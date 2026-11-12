@@ -284,6 +284,13 @@ function normalizeHeaders(fields) {
   })
 }
 
+/** A grid opened from a file is named after it: "cart-menu.xlsx" reads "Cart menu". */
+function fileGridName(path) {
+  const base = String(path || '').split(/[\\/]/).pop().replace(/\.[a-z0-9]+$/i, '').replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80)
+
+  return base ? base[0].toUpperCase() + base.slice(1) : ''
+}
+
 function fileTableHint(path) {
   const lower = String(path || '').toLowerCase()
 
@@ -1386,7 +1393,8 @@ function cellLook(base, look, paint, column) {
   const fill = look?.f || paint
 
   if (fill && PAINTS[fill]) {
-    style.background = PAINTS[fill].fill
+    // backgroundColor, not the shorthand: a picked block lays a tint over it as a background image.
+    style.backgroundColor = PAINTS[fill].fill
     style.color = FILL_INK
   }
 
@@ -10691,7 +10699,7 @@ function ImportPanel() {
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState('')
 
-  const commit = useCallback((raw, hint = 'auto') => {
+  const commit = useCallback((raw, hint = 'auto', name) => {
     try {
       const { headers, rows } = parseTable(raw, hint)
 
@@ -10701,7 +10709,7 @@ function ImportPanel() {
         return
       }
 
-      addRows(headers, rows)
+      addRows(headers, rows, name || undefined)
       // Hermes reads what just arrived and suggests columns. One call; nothing
       // is added or run until the user picks.
       void readSheet()
@@ -10724,7 +10732,7 @@ function ImportPanel() {
           return
         }
 
-        commit(file.text, fileTableHint(file.path))
+        commit(file.text, fileTableHint(file.path), fileGridName(file.path))
       }
     } catch (error) {
       setNote(error instanceof Error ? error.message : String(error))
