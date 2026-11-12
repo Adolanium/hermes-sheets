@@ -86,6 +86,10 @@ function loadWorkspace(responses = [], options = {}) {
         suggestRules,
         hermesMarks,
         hydrateChatInbox,
+        $chatBridge,
+        backendKey,
+        setChatSharing,
+        syncChats,
         hydrateWorkspace,
         importFromFile,
         matchesReviewFilter,
@@ -5643,4 +5647,135 @@ test('picked rows go to a board as one note each, reading the way the sheet does
   assert.deepEqual(Array.from(runtime.rowNotes(runtime.$grid.get(), [])), [])
   assert.throws(() => runtime.sendToBoard(runtime.$grid.get(), []), /Tick the rows/)
   assert.throws(() => runtime.sendToBoard(runtime.$grid.get(), ['r1']), /Whiteboard did not take the rows/)
+})
+
+/** A stand-in for Hermes with profiles: each profile has its own plugin backend,
+ *  and the page's routes go to whichever profile is selected. */
+function sheetsPage(hermes, rest) {
+  const runtime = loadWorkspace([], { rest })
+
+  runtime.host.state = hermes.state
+  runtime.hydrateWorkspace(makeStorage())
+
+  return runtime
+}
+
+function profiles(installed, copies) {
+  let current = installed[0]
+  const backends = Object.fromEntries(installed.map(name => [name, { calls: [], copies: new Map(), inbox: [], sharing: false }]))
+  const rest = async (path, options = {}) => {
+    const backend = backends[current]
+
+    if (!backend) {
+      throw new Error('404')
+    }
+
+    backend.calls.push(`${options.method || 'GET'} ${path}`)
+
+    if (path === '/inbox') {
+      return { entries: [...backend.inbox] }
+    }
+
+    if (path === '/sharing') {
+      backend.sharing = options.body.on
+
+      if (!options.body.on) {
+        backend.copies.clear()
+      }
+    } else if (path.startsWith(`/${copies}/`) && options.method === 'PUT') {
+      backend.copies.set(path.split('/')[2], options.body)
+    } else if (path.endsWith('/ack')) {
+      backend.inbox = backend.inbox.filter(entry => entry.id !== path.split('/')[2])
+    }
+
+    return {}
+  }
+
+  return { backends, rest, state: { connectionId: { get: () => 'local' }, profile: { get: () => current } }, use: name => (current = name) }
+}
+
+test('after a profile switch, the new profile gets the sharing switch and the grid copies', async () => {
+  const hermes = profiles(['default', 'work'], 'grids')
+  const page = sheetsPage(hermes, hermes.rest)
+
+  page.setChatSharing(true)
+
+  const seen = { backend: null, quietUntil: 0, shared: false }
+
+  await page.syncChats(seen)
+  assert.equal(hermes.backends.default.sharing, true)
+  assert.equal(hermes.backends.default.calls.includes('POST /grids/prune'), true)
+  assert.equal(hermes.backends.work.sharing, false)
+
+  // A second round on the same profile sends nothing again.
+  const before = hermes.backends.default.calls.length
+
+  await page.syncChats(seen)
+  assert.deepEqual(hermes.backends.default.calls.slice(before), ['GET /inbox'])
+
+  hermes.use('work')
+  await page.syncChats(seen)
+  assert.equal(hermes.backends.work.sharing, true)
+  assert.equal(hermes.backends.work.calls.includes('POST /grids/prune'), true)
+  assert.equal(hermes.backends.work.copies.size, hermes.backends.default.copies.size)
+  assert.equal(page.$chatBridge.get(), 'ok')
+  assert.equal(page.backendKey(), 'local|work')
+
+  // Sharing switched off in one profile reaches the other when Hermes is back on it.
+  page.setChatSharing(false)
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(hermes.backends.work.sharing, false)
+  assert.equal(hermes.backends.default.sharing, true)
+  hermes.use('default')
+  await page.syncChats(seen)
+  assert.equal(hermes.backends.default.sharing, false)
+  assert.equal(hermes.backends.default.copies.size, 0)
+})
+
+test('a profile without the plugin says so, and the sync comes back when Hermes returns', async () => {
+  const hermes = profiles(['default'], 'grids')
+  const page = sheetsPage(hermes, hermes.rest)
+
+  page.setChatSharing(true)
+
+  const seen = { backend: null, quietUntil: 0, shared: false }
+
+  await page.syncChats(seen)
+  assert.equal(page.$chatBridge.get(), 'ok')
+
+  hermes.use('work')
+  await page.syncChats(seen)
+  assert.equal(page.$chatBridge.get(), 'missing')
+  assert.equal(seen.shared, false)
+
+  hermes.use('default')
+  hermes.backends.default.sharing = false
+  await page.syncChats(seen)
+  assert.equal(page.$chatBridge.get(), 'ok')
+  assert.equal(hermes.backends.default.sharing, true)
+})
+
+test('a reply that arrives after a profile switch is not acted on in the new profile', async () => {
+  const hermes = profiles(['default', 'work'], 'grids')
+  let switchDuringInbox = true
+  const rest = async (path, options) => {
+    const answer = await hermes.rest(path, options)
+
+    if (path === '/inbox' && switchDuringInbox) {
+      switchDuringInbox = false
+      hermes.use('work')
+    }
+
+    return answer
+  }
+  const page = sheetsPage(hermes, rest)
+
+  hermes.backends.default.inbox.push({ id: 'w0123456789ab', kind: 'proposal' })
+
+  const seen = { backend: null, quietUntil: 0, shared: false }
+
+  await page.syncChats(seen)
+  assert.equal(hermes.backends.work.calls.length, 0)
+  assert.equal(hermes.backends.default.inbox.length, 1)
+  assert.deepEqual(hermes.backends.default.calls, ['GET /inbox'])
 })

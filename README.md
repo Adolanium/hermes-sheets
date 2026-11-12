@@ -108,7 +108,7 @@ Sheets gives Hermes four tools, so you can talk about a sheet without opening it
 
 Ask a chat "which of my overnight reports need attention first?" and it reads the grid, answers in the chat, and suggests an owner column for you to review in Sheets. The `sheets:grids` skill teaches it to read before it answers, to treat cell text as data, and to leave every decision to you.
 
-While chat access is on, chats read a copy of each grid that Sheets keeps in Hermes plugin data while the page runs. Turning **Chats can read my grids** off deletes the copies. Until you turn it on, the tools tell the chat that access is off and how you can change that.
+While chat access is on, chats read a copy of each grid that Sheets keeps in Hermes plugin data while the page runs. The copies live in the plugin data of the profile you are in, and each profile where Sheets is installed gets its own when you open Hermes on it. Turning **Chats can read my grids** off deletes the copies in the profile you are in straight away, and in each other profile the next time you open Hermes on it. Until you turn it on, the tools tell the chat that access is off and how you can change that.
 
 ## When the answer isn't in the row, send an agent
 
@@ -160,6 +160,18 @@ hermes plugins install Adolanium/hermes-sheets
 Or in Hermes Desktop, open **Capabilities › Plugins › Install from Git** and paste `https://github.com/Adolanium/hermes-sheets`.
 
 A desktop plugin installed from the command line starts switched off. Open **Capabilities › Plugins**, find **Sheets**, and switch it on. If it doesn't appear in the sidebar, quit Hermes Desktop completely and open it again. The chat tools load in the next chat you start.
+
+### More than one Hermes profile
+
+The Sheets page is part of the Desktop app, so it shows in every profile and your grids are the same in all of them. Anything Hermes does from the page runs in the profile you have selected.
+
+Opening and saving files and the chat tools go through the agent half of the plugin. Hermes installs and switches on that half for each profile separately. To use Sheets fully in another profile, install it for that profile as well:
+
+```sh
+hermes -p <profile> plugins install Adolanium/hermes-sheets
+```
+
+Then switch it on in **Capabilities › Plugins** while that profile is selected. In a profile without it, the page says its backend is not running there.
 
 ### Open it
 

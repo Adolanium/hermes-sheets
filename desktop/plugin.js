@@ -6029,7 +6029,7 @@ async function pickedFile(action, body, fallback) {
   try {
     answer = await pluginRest(`/picked-file/${action}`, { body, method: 'POST' })
   } catch {
-    throw new Error("Sheets' backend isn't running. Switch the Sheets plugin on in Capabilities > Plugins, then try again.")
+    throw new Error("Sheets' backend isn't running in this Hermes profile. Hermes installs and switches on plugins for each profile separately, so install Sheets for this profile and switch it on in Capabilities > Plugins, then try again.")
   }
 
   if (!answer?.ok) {
@@ -8422,7 +8422,22 @@ function suiteListen(listen) {
   })
 }
 
-async function takeChatInbox() {
+/** Which Hermes backend this page's own routes reach right now. They follow the
+ *  profile selected in Hermes, and every profile keeps its own plugin data: its
+ *  own inbox, its own copies, its own sharing switch. */
+function backendKey() {
+  const read = cell => {
+    try {
+      return String(cell?.get?.() ?? '')
+    } catch {
+      return ''
+    }
+  }
+
+  return `${read(host.state?.connectionId)}|${read(host.state?.profile)}`
+}
+
+async function takeChatInbox(backend = backendKey()) {
   if (!pluginRest) {
     return 0
   }
@@ -8430,9 +8445,18 @@ async function takeChatInbox() {
   const answer = await pluginRest('/inbox')
   let taken = 0
 
+  // The profile changed while Hermes was answering: this reply is the old one's.
+  if (backendKey() !== backend) {
+    return 0
+  }
+
   $chatBridge.set('ok')
 
   for (const entry of Array.isArray(answer?.entries) ? answer.entries : []) {
+    if (backendKey() !== backend) {
+      return taken
+    }
+
     const result = entry?.kind === 'grid' ? takeChatGrid(entry) : takeChatProposal(entry)
 
     if (result !== 'retry' && typeof entry?.id === 'string') {
@@ -8444,33 +8468,54 @@ async function takeChatInbox() {
   return taken
 }
 
-/** Poll the backend while the plugin is loaded. Missing routes (the Python
- *  half switched off, or still starting) back off and try again. */
+/** One round with the chat tools: take what chats sent, and make sure this
+ *  profile's backend has the sharing switch and the grid copies. `seen`
+ *  remembers which backend was synced, so a profile switch syncs the new one.
+ *  Missing routes (the Python half not installed for this profile, switched
+ *  off, or still starting) back off and try again. */
+async function syncChats(seen) {
+  const backend = backendKey()
+
+  if (backend !== seen.backend) {
+    seen.backend = backend
+    seen.quietUntil = 0
+    seen.shared = false
+    $chatBridge.set('unknown')
+  }
+
+  if (Date.now() < seen.quietUntil) {
+    return
+  }
+
+  try {
+    await takeChatInbox(backend)
+
+    if (backendKey() === backend && !seen.shared) {
+      await shareAllGrids()
+      seen.shared = backendKey() === backend
+    }
+  } catch {
+    if (backendKey() === backend) {
+      $chatBridge.set('missing')
+      seen.quietUntil = Date.now() + 15000
+    }
+
+    seen.shared = false
+  }
+}
+
+/** Poll the backend while the plugin is loaded. */
 function watchChats() {
+  const seen = { backend: null, quietUntil: 0, shared: false }
   let stopped = false
   let timer = 0
-  let quietUntil = 0
-  let shared = false
 
   const tick = async () => {
     if (stopped) {
       return
     }
 
-    try {
-      if (Date.now() >= quietUntil) {
-        await takeChatInbox()
-
-        if (!shared) {
-          shared = true
-          await shareAllGrids()
-        }
-      }
-    } catch {
-      $chatBridge.set('missing')
-      shared = false
-      quietUntil = Date.now() + 15000
-    }
+    await syncChats(seen)
 
     if (!stopped) {
       timer = setTimeout(tick, CHAT_INBOX_EVERY_MS)
@@ -15441,13 +15486,13 @@ function ChatAccessSetting() {
             className: 'mt-1 block leading-relaxed',
             style: T.tertiary,
             children:
-              'Off until you turn it on. When on, any Hermes chat can read your grids and suggest changes, which wait here for your review, and a copy of each grid is kept in Hermes plugin data on this computer. Turning it off deletes the copies.'
+              'Off until you turn it on. When on, any Hermes chat can read your grids and suggest changes, which wait here for your review, and a copy of each grid is kept in the plugin data of the Hermes profile you are in. Turning it off deletes the copies, in each other profile the next time you open Hermes on it.'
           }),
           bridge === 'missing'
             ? jsx('span', {
                 className: 'mt-1 block leading-relaxed',
                 style: T.accent,
-                children: "Sheets' chat tools aren't running. Switch the Sheets plugin on in Capabilities > Plugins."
+                children: "Sheets' chat tools aren't running in this Hermes profile. Hermes installs and switches on plugins for each profile separately, so install Sheets for this profile too and switch it on in Capabilities > Plugins."
               })
             : null
         ]
