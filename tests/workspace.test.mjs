@@ -89,6 +89,7 @@ function loadWorkspace(responses = [], options = {}) {
         $chatBridge,
         backendKey,
         profileRequest,
+        recoverReply,
         setChatSharing,
         syncChats,
         hydrateWorkspace,
@@ -5860,4 +5861,45 @@ test('without a route list the profile is named, and an older Hermes keeps the p
   await older.profileRequest('session.create', { title: 'T' })
   assert.equal(old.calls[0].via, 'request')
   assert.deepEqual(JSON.parse(JSON.stringify(old.calls[0].params)), { title: 'T' })
+})
+
+test('an answer missing from the completion is read back from the stored transcript', async () => {
+  const asked = []
+  const page = (host => { const runtime = loadWorkspace(); Object.assign(runtime.host, host); return runtime })({
+    request: async (method, params) => {
+      asked.push([method, params.session_id])
+
+      return {
+        messages: [
+          { role: 'assistant', text: 'An older answer.' },
+          { role: 'user', text: 'Do it' },
+          { role: 'assistant', text: 'Looking into it.' },
+          { name: 'web_search', role: 'tool' },
+          { role: 'assistant', text: '{"headline": "Done", "result": "Stored answer."}' }
+        ]
+      }
+    }
+  })
+
+  assert.equal(await page.recoverReply('s1', 'streamed text'), '{"headline": "Done", "result": "Stored answer."}')
+  assert.deepEqual(asked, [['session.history', 's1']])
+  // Only what came after the newest user turn counts.
+  assert.equal(page.finalAssistantText([{ role: 'assistant', text: 'Old.' }, { role: 'user', text: 'Again' }]), '')
+})
+
+test('when the transcript cannot be read, what was streamed is used, and nothing stays nothing', async () => {
+  let tries = 0
+  const down = (host => { const runtime = loadWorkspace(); Object.assign(runtime.host, host); return runtime })({
+    request: async () => {
+      tries += 1
+      throw new Error('gateway restarting')
+    }
+  })
+
+  assert.equal(await down.recoverReply('s1', 'Streamed answer.'), 'Streamed answer.')
+  assert.equal(tries, 2)
+
+  const empty = (host => { const runtime = loadWorkspace(); Object.assign(runtime.host, host); return runtime })({ request: async () => ({ messages: [{ role: 'user', text: 'Do it' }] }) })
+
+  assert.equal(await empty.recoverReply('s1', ''), '')
 })

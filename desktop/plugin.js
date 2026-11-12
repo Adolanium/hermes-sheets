@@ -4501,6 +4501,28 @@ async function resolveAnswer(column, ask, cancelled) {
 // ---------------------------------------------------------------------------
 
 /** Resolve or reject within `ms`. setTimeout is the only timer a plugin has. */
+/** The answer of a turn whose message.complete came without text. Hermes sends
+ *  an empty completion when another process owned the turn: the reply was
+ *  streamed or only stored, and the client is expected to read it back. The
+ *  stored transcript is the authority. What was streamed after the last tool
+ *  call is the fallback when the transcript cannot be read. */
+async function recoverReply(sid, streamed) {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const history = await withTimeout(host.request('session.history', { session_id: sid }), 8000)
+      const text = finalAssistantText(history?.messages)
+
+      if (text.trim()) {
+        return text
+      }
+    } catch {
+      // Try once more, then fall back to what was streamed.
+    }
+  }
+
+  return streamed
+}
+
 function withTimeout(promise, ms) {
   let timer = null
 
@@ -4831,6 +4853,30 @@ function createResearchCell({ brief, budget, column, onActivity, onCall, prompt,
       })
     )
 
+    // Text streamed since the last tool call, kept in case the completion comes without it.
+    let streamed = ''
+
+    stops.push(
+      host.onEvent('message.delta', event => {
+        if (event?.session_id === sid && typeof event.payload?.text === 'string') {
+          streamed += event.payload.text
+        }
+      })
+    )
+    stops.push(
+      host.onEvent('message.interim', event => {
+        if (event?.session_id === sid) {
+          streamed = ''
+        }
+      })
+    )
+    stops.push(
+      host.onEvent('tool.start', event => {
+        if (event?.session_id === sid) {
+          streamed = ''
+        }
+      })
+    )
     stops.push(
       host.onEvent('message.complete', event => {
         if (event?.session_id !== sid) {
@@ -4846,7 +4892,13 @@ function createResearchCell({ brief, budget, column, onActivity, onCall, prompt,
           return
         }
 
-        finish(null, String(payload.text ?? payload.content ?? ''))
+        const reply = String(payload.text ?? payload.content ?? '')
+
+        if (reply.trim()) {
+          finish(null, reply)
+        } else {
+          void recoverReply(sid, streamed).then(text => finish(null, text), () => finish(null, streamed))
+        }
       })
     )
 
