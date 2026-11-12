@@ -141,6 +141,14 @@ function loadWorkspace(responses = [], options = {}) {
         removeChatProposal,
         sharedGridCopy,
         takeChatGrid,
+        sendToData,
+        suiteFormat,
+        suiteListen,
+        suitePeers,
+        suiteTable,
+        takeSuiteTable,
+        rowNotes,
+        sendToBoard,
         takeChatProposal,
 
         // Receipt
@@ -5551,4 +5559,84 @@ test('an Excel workbook imports through the backend, one sheet at a time', async
   await new Promise(resolve => setImmediate(resolve))
   runtime.$sheetAsk.get().pick(null)
   assert.equal(await again, null)
+})
+
+test('a sheet goes to the Data page as the rows on screen, reading the way its columns do', () => {
+  const runtime = loadWorkspace()
+
+  formatGrid(runtime)
+  runtime.setColumnFormat(['c2'], { kind: 'currency', symbol: '£' })
+  runtime.setColumnFormat(['c3'], { kind: 'percent' })
+
+  const table = JSON.parse(JSON.stringify(runtime.suiteTable(runtime.$grid.get(), ['r3', 'r1', 'gone'])))
+
+  assert.deepEqual(table.columns, ['item', 'price', 'margin'])
+  assert.deepEqual(table.rows, [['Cake', '£1,250.50', '7%'], ['Latte', '£3.40', '18%']])
+  assert.equal(runtime.suiteTable(runtime.$grid.get(), []).rows.length, 3)
+  // No window to speak through: nobody is there, and a send says so instead of pretending.
+  assert.deepEqual(Array.from(runtime.suitePeers()), [])
+  assert.throws(() => runtime.sendToData(runtime.$grid.get(), []), /Data did not take the table/)
+})
+
+test('a table from another suite page becomes a new grid and never touches an open one', () => {
+  const runtime = loadWorkspace()
+
+  formatGrid(runtime)
+  const before = JSON.stringify(runtime.$grid.get())
+  const heard = {}
+
+  runtime.suiteListen((type, listener) => {
+    heard[type] = listener
+  })
+
+  const hello = { detail: { peers: [] } }
+
+  heard['hermes-suite:hello'](hello)
+  heard['hermes-suite:hello']({ detail: null })
+  assert.deepEqual(hello.detail.peers, ['sheets'])
+
+  const forData = { detail: { columns: ['a'], rows: [['1']], taken: false, to: 'data' } }
+  const empty = { detail: { columns: ['a'], rows: [], taken: false, to: 'sheets' } }
+  const sent = { detail: { columns: ['drink', 'price', 'share', 'note'], from: 'data', name: 'UK latte prices', rows: [['Latte', '£3.4', '48%', 'ok'], ['Tea', '-£2', '9.5%', '12'], ['Water', '', '', ''], 'junk'], taken: false, to: 'sheets' } }
+
+  heard['hermes-suite:table'](forData)
+  heard['hermes-suite:table'](empty)
+  assert.equal(forData.detail.taken, false)
+  assert.equal(empty.detail.taken, false)
+  assert.equal(runtime.$workspace.get().grids.length, 1)
+
+  heard['hermes-suite:table'](sent)
+  assert.equal(sent.detail.taken, true)
+  assert.equal(runtime.$workspace.get().grids.length, 2)
+
+  const grid = runtime.$grid.get()
+
+  assert.equal(grid.name, 'UK latte prices')
+  assert.equal(grid.rows.length, 3)
+  assert.deepEqual(JSON.parse(JSON.stringify(grid.columns.map(column => [column.name, column.format || null]))), [
+    ['drink', null],
+    ['price', { kind: 'currency', symbol: '£' }],
+    ['share', { kind: 'percent' }],
+    ['note', null]
+  ])
+  assert.equal(grid.rows[1].cells[grid.columns[1].id].value, '-£2')
+  // A second delivery of the same event is ignored, and the first grid is as it was.
+  heard['hermes-suite:table'](sent)
+  assert.equal(runtime.$workspace.get().grids.length, 2)
+  runtime.switchGrid(JSON.parse(before).id)
+  assert.equal(JSON.stringify(runtime.$grid.get()), before)
+  assert.equal(runtime.suiteFormat(['£1', '$2']), null)
+  assert.equal(runtime.suiteFormat(['', ' ']), null)
+})
+
+test('picked rows go to a board as one note each, reading the way the sheet does', () => {
+  const runtime = loadWorkspace()
+
+  formatGrid(runtime)
+  runtime.setColumnFormat(['c2'], { kind: 'currency', symbol: '£' })
+
+  assert.deepEqual(Array.from(runtime.rowNotes(runtime.$grid.get(), ['r2', 'r1', 'gone'])), ['Latte. price £3.40, margin 18%', 'Tea. price £2.00, margin 42%'])
+  assert.deepEqual(Array.from(runtime.rowNotes(runtime.$grid.get(), [])), [])
+  assert.throws(() => runtime.sendToBoard(runtime.$grid.get(), []), /Tick the rows/)
+  assert.throws(() => runtime.sendToBoard(runtime.$grid.get(), ['r1']), /Whiteboard did not take the rows/)
 })

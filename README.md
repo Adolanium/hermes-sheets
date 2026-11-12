@@ -11,7 +11,7 @@
   Hermes reads the sheet, suggests the columns worth adding, and explains what the answers add up to.
   Any Hermes chat can read your grids too. You decide what runs, and nothing an agent writes lands until you approve it.
 
-  <sub>POWERED BY <a href="https://github.com/NousResearch/hermes-agent">HERMES AGENT</a> &nbsp;·&nbsp; COMMUNITY PLUGIN &nbsp;·&nbsp; VERSION 0.1.3</sub>
+  <sub>POWERED BY <a href="https://github.com/NousResearch/hermes-agent">HERMES AGENT</a> &nbsp;·&nbsp; COMMUNITY PLUGIN &nbsp;·&nbsp; VERSION 0.1.4</sub>
 
   <br /><br />
 
@@ -135,6 +135,8 @@ Sheets handles the small things that make a sheet worth opening again:
 - **Formula** columns compute each row from its other columns with no model call, such as `{{price}} * {{quantity}}` or `IF({{urgency}} = "high", 3, 1)`. They use column names, not cell addresses, so sorting and new rows never break them. Functions: SUM, AVERAGE, MIN, MAX, COUNT, ROUND, ABS, IF, AND, OR, NOT, CONCAT, LEN, UPPER and LOWER.
 - The totals row under the grid shows a Sum, Average, Min, Max or Count for any column, over the rows on screen.
 - **Export JSON** writes one grid's audit, or the whole workspace, with every handoff, session, and receipt linked.
+- **Chart** opens the rows on screen as a report in the [Data](https://github.com/Adolanium/hermes-data) plugin, where Hermes suggests the charts. Data's **Open in Sheets** sends a table back as a new grid. The button only shows while Data is installed and on.
+- **Pin to board** sends the rows you ticked to your open board in the [Whiteboard](https://github.com/Adolanium/hermes-whiteboard) plugin, one note each, up to 24 at a time. It shows while Whiteboard is installed and on.
 - **Copy grid card** puts a `::sheets` card in a Hermes chat, which shows a live, compact view of that grid in the transcript.
 
 ## Built for real sheets, not a demo list
@@ -189,6 +191,7 @@ Grids live in Hermes plugin storage on this desktop under `hermes.plugin.sheets.
 Two things reach past that storage, and each starts with a click from you.
 
 - **Hermes sessions with tools.** **Build sheet**, research columns, and **Ask** start hidden Hermes sessions that use your Hermes tools. They search and read third-party sites, and a research answer lists the pages it read. An approval prompt inside a build or research session is denied automatically, because nobody could see it.
+- **Sheets, Data and Whiteboard hand things to each other inside the app window**, with a browser event between the pages, and only when you click. Nothing is written to disk for it, no backend is called and no model is involved. A table that arrives becomes a new grid and never changes an existing one. Any other Desktop plugin you have switched on runs in the same window and could send or read such an event.
 - **Files and folders you pick.** Import reads the one text, CSV or Excel file you choose in the system file dialog. A workbook is read with the Python standard library only, so no macro runs and no formula is evaluated, and a workbook over 8 MB or one that carries a DTD is refused. Export writes the one Excel, CSV or JSON file you name there. The page hands that path to Sheets' own backend in Hermes, which reads or writes that file and refuses other file types and anything inside your Hermes home. The folder source reads text files in a folder you grant, up to 150 of them. Sheets itself reads and writes nothing else outside Hermes storage, runs no shell commands, and starts no background process.
 
 - **Read-back writes.** Sheets reads every save back before it reports success. A save that didn't land shows **Not saved**, with export as the way out.
@@ -201,7 +204,7 @@ Two things reach past that storage, and each starts with a click from you.
 
 Sheets needs Hermes 0.22.6 or later. It uses the desktop plugin SDK and standard gateway methods, and it works around a few missing ones. When `session.set_hidden` is missing, hidden sessions are created hidden instead.
 
-It is checked by hand on macOS with Hermes Desktop 0.22.7. Windows and Linux use the same code path but haven't been checked by hand yet. The plugin file is about 570 KB, which Desktop 0.21.6 and later load (older shells stopped at 512 KiB).
+It is checked by hand on macOS with Hermes Desktop 0.22.7. Windows and Linux use the same code path but haven't been checked by hand yet. The plugin file is about 600 KB, which Desktop 0.21.6 and later load (older shells stopped at 512 KiB).
 
 ## Limits
 

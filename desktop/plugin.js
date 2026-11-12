@@ -6208,7 +6208,28 @@ async function exportWorkspaceAgentAudit() {
 
 const STYLE_ID = 'sheets-styles'
 
+// The look Sheets shares with the Data and Whiteboard pages: ink on warm paper,
+// a dotted desk, the app's display face for titles, and gold for Hermes.
+const INK = 'hsl(232 26% 17%)'
+const PAPER = 'hsl(42 60% 98%)'
+const GOLD_HUE = 41
+const DISPLAY = "'Collapse', ui-serif, Georgia, serif"
+
 const CSS = `
+.sheets-top { position: relative; z-index: 2; min-height: 46px; background: var(--ui-surface-background); }
+.sheets-stage, .sheets-start > .sheets-scroll { background-color: hsl(40 44% 95.5%); background-image: radial-gradient(hsl(232 26% 17% / .16) 1px, transparent 1.3px); background-size: 22px 22px; }
+:root.dark .sheets-stage, :root.dark .sheets-start > .sheets-scroll { background-color: hsl(228 13% 12%); background-image: radial-gradient(hsl(40 30% 90% / .14) 1px, transparent 1.3px); }
+.sheets-desk { --sheets-ink: ${INK}; display: flex; flex: 1; flex-direction: column; gap: 14px; min-width: 0; min-height: 0; padding: 20px 26px 22px; }
+:root.dark .sheets-desk { --sheets-ink: hsl(40 36% 92%); }
+.sheets-headline { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; color: var(--sheets-ink); }
+.sheets-headline h1 { margin: 0; min-width: 0; font: 700 clamp(24px, 2.7vw, 34px)/1.08 ${DISPLAY}; letter-spacing: -.01em; overflow-wrap: anywhere; }
+.sheets-headline span { font: 12.5px var(--font-sans, system-ui); opacity: .62; white-space: nowrap; }
+.sheets-card { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; border-radius: 15px; background: ${PAPER}; border: 1.6px solid ${INK}; box-shadow: 0 1px 0 ${INK}, 0 18px 30px -22px hsl(232 40% 12% / .5); --ui-text-primary: ${INK}; --ui-surface-background: ${PAPER}; --ui-bg-quaternary: hsl(42 50% 94%); --ui-stroke-secondary: hsl(232 20% 30% / .17); }
+:root.dark .sheets-card { background: hsl(228 14% 15%); border-color: hsl(40 30% 86% / .5); box-shadow: 0 18px 30px -22px hsl(0 0% 0% / .7); --ui-text-primary: hsl(40 36% 92%); --ui-surface-background: hsl(228 14% 15%); --ui-bg-quaternary: hsl(228 14% 19%); --ui-stroke-secondary: hsl(40 30% 90% / .13); }
+.sheets-page .sheets-gold:not(:disabled) { color: hsl(${GOLD_HUE} 70% 28%) !important; border: 1px solid hsl(${GOLD_HUE} 70% 58% / .6) !important; background: hsl(${GOLD_HUE} 92% 62% / .2) !important; }
+.sheets-page .sheets-gold:not(:disabled):hover { background: hsl(${GOLD_HUE} 92% 62% / .34) !important; }
+:root.dark .sheets-page .sheets-gold:not(:disabled) { color: hsl(${GOLD_HUE} 92% 72%) !important; }
+@media (max-width: 720px) { .sheets-desk { padding: 14px 12px 14px; } }
 .sheets-page ::selection { background: color-mix(in srgb, var(--ui-accent) 28%, transparent); color: var(--ui-text-primary); }
 .sheets-page input, .sheets-page textarea { caret-color: var(--ui-accent); }
 .sheets-row { transition: background 120ms ease; }
@@ -6216,7 +6237,7 @@ const CSS = `
 .sheets-needs-review { background: color-mix(in srgb, var(--ui-accent) 6%, transparent); }
 .sheets-cell:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--ui-accent); }
 .sheets-edited { background: color-mix(in srgb, var(--ui-accent) 9%, transparent); }
-.sheets-hermes { position: relative; --sheets-c: hsl(262 72% 58%); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--sheets-c) 45%, transparent); }
+.sheets-hermes { position: relative; --sheets-c: hsl(${GOLD_HUE} 92% 46%); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--sheets-c) 45%, transparent); }
 .sheets-hermes::after { content: ''; position: absolute; top: 0; right: 0; width: 7px; height: 7px; background: var(--sheets-c); clip-path: polygon(0 0, 100% 0, 100% 100%); pointer-events: none; }
 .sheets-pick { opacity: 0; transition: opacity 120ms; }
 .sheets-cell:hover .sheets-pick, .sheets-cell:focus-visible .sheets-pick { opacity: .55; }
@@ -6363,9 +6384,11 @@ const CSS = `
 .sheets-start-copy { display: flex; flex-direction: column; gap: .75rem; max-width: 42rem; }
 .sheets-start-title {
   max-width: 18ch;
-  font-size: clamp(1.8rem, 4vw, 3.15rem);
+  font-family: ${DISPLAY};
+  font-weight: 700;
+  font-size: clamp(2.1rem, 4.6vw, 3.6rem);
   line-height: 1.02;
-  letter-spacing: -0.035em;
+  letter-spacing: -0.012em;
 }
 .sheets-start-stage {
   display: grid;
@@ -8150,9 +8173,9 @@ function takeChatProposal(entry) {
 
 /** A grid a chat gathered. It joins the workspace without taking over the
  *  screen, keeping the ids the chat already knows. */
-function takeChatGrid(entry) {
+function takeChatGrid(entry, options = {}) {
   const id = String(entry?.grid || '')
-  const columnsIn = Array.isArray(entry?.columns) ? entry.columns.slice(0, 30) : []
+  const columnsIn = Array.isArray(entry?.columns) ? entry.columns.slice(0, options.maxColumns || 30) : []
 
   if (!storage || !GRID_ID_RE.test(id) || columnsIn.length === 0) {
     return 'invalid'
@@ -8166,9 +8189,10 @@ function takeChatGrid(entry) {
     id: GRID_ID_RE.test(String(column?.id || '')) ? String(column.id) : uid('c'),
     kind: 'literal',
     name: String(column?.name || 'column').trim().slice(0, 80) || 'column',
-    type: 'text'
+    type: 'text',
+    ...(cleanFormat(column?.format) ? { format: cleanFormat(column.format) } : {})
   }))
-  const rows = (Array.isArray(entry.rows) ? entry.rows : []).slice(0, 500).map(row => ({
+  const rows = (Array.isArray(entry.rows) ? entry.rows : []).slice(0, options.maxRows || 500).map(row => ({
     cells: Object.fromEntries(
       columns.map((column, index) => [column.id, cell('done', String(row?.values?.[index] ?? '').slice(0, WRITEBACK_MAX_VALUE))])
     ),
@@ -8193,6 +8217,11 @@ function takeChatGrid(entry) {
 
   $workspace.set(workspace)
   shareGrid(grid)
+
+  if (options.quiet) {
+    return 'taken'
+  }
+
   host.notify({
     action: { label: 'Open in Sheets', onClick: () => openFromChat(id) },
     durationMs: 15000,
@@ -8202,6 +8231,187 @@ function takeChatGrid(entry) {
   })
 
   return 'taken'
+}
+
+// ---------------------------------------------------------------------------
+// Working with the Data page. Desktop plugins load into one window, so two of
+// them can hand a table to each other with a plain window event: nothing is
+// written to disk, nothing goes through a backend, and no model is involved.
+// A handoff only ever starts from a click, and what arrives becomes a NEW grid
+// here. It never touches an existing one.
+//
+//   hermes-suite:hello   detail { peers: [] }      each listener adds its id
+//   hermes-suite:table   detail { to, from, name, columns: [name], rows: [[cell]] }
+//                        the receiver sets detail.taken = true and opens it
+// ---------------------------------------------------------------------------
+
+const SUITE_HELLO = 'hermes-suite:hello'
+const SUITE_TABLE = 'hermes-suite:table'
+const SUITE_PEERS = ['data', 'sheets', 'whiteboard']
+const SUITE_MAX_ROWS = 5000
+const SUITE_MAX_COLUMNS = 40
+
+function suiteFire(type, detail) {
+  if (typeof window === 'undefined' || typeof window.dispatchEvent !== 'function' || typeof CustomEvent !== 'function') {
+    return detail
+  }
+
+  try {
+    window.dispatchEvent(new CustomEvent(type, { detail }))
+  } catch {
+    // A listener that throws is the other plugin's problem, not a failed click here.
+  }
+
+  return detail
+}
+
+/** The other suite pages that are installed and switched on right now. */
+function suitePeers() {
+  const peers = suiteFire(SUITE_HELLO, { from: 'sheets', peers: [] }).peers
+
+  return [...new Set((Array.isArray(peers) ? peers : []).filter(id => SUITE_PEERS.includes(id) && id !== 'sheets'))]
+}
+
+/** A grid as the plain table another page gets: column names and rows of text,
+ *  in the order given. A formatted column goes out the way it reads, so £3.40
+ *  and 18% arrive as money and a percentage. */
+function suiteTable(grid, rowIds) {
+  const columns = grid.columns.slice(0, SUITE_MAX_COLUMNS)
+  const byId = new Map(grid.rows.map(row => [row.id, row]))
+  const rows = (Array.isArray(rowIds) && rowIds.length > 0 ? rowIds.map(id => byId.get(id)).filter(Boolean) : grid.rows).slice(0, SUITE_MAX_ROWS)
+
+  return {
+    columns: columns.map(column => column.name),
+    name: String(grid.name || 'Sheet').slice(0, 80),
+    rows: rows.map(row =>
+      columns.map(column => {
+        const value = String(row.cells[column.id]?.value ?? '')
+
+        return column.format ? formatValue(value, cleanFormat(column.format)) : value
+      })
+    )
+  }
+}
+
+/** Open the rows as a report on the Data page. Returns how many rows went. */
+function sendToData(grid, rowIds) {
+  const table = suiteTable(grid, rowIds)
+
+  if (table.rows.length === 0 || table.columns.length === 0) {
+    throw new Error('There are no rows on screen to chart.')
+  }
+
+  const detail = suiteFire(SUITE_TABLE, { ...table, from: 'sheets', taken: false, to: 'data' })
+
+  if (detail.taken !== true) {
+    throw new Error('Data did not take the table. Switch the Data plugin on in Capabilities > Plugins, then try again.')
+  }
+
+  return table.rows.length
+}
+
+/** Rows as notes for a board: the first column leads, then up to three more
+ *  filled columns by name. */
+function rowNotes(grid, rowIds) {
+  const wanted = new Set(rowIds)
+  const [lead, ...rest] = grid.columns
+
+  if (!lead) {
+    return []
+  }
+
+  return grid.rows
+    .filter(row => wanted.has(row.id))
+    .slice(0, 24)
+    .map(row => {
+      const show = column => {
+        const value = String(row.cells[column.id]?.value ?? '').trim()
+
+        return column.format ? formatValue(value, cleanFormat(column.format)) : value
+      }
+      const facts = rest.map(column => [column.name, show(column)]).filter(([, value]) => value && value.length <= 60).slice(0, 3)
+
+      return [show(lead) || 'Untitled row', facts.map(([name, value]) => `${name} ${value}`).join(', ')].filter(Boolean).join('. ').slice(0, 280)
+    })
+}
+
+/** Pin the picked rows to the open board on the Whiteboard page. */
+function sendToBoard(grid, rowIds) {
+  const notes = rowNotes(grid, rowIds)
+
+  if (notes.length === 0) {
+    throw new Error('Tick the rows to pin first.')
+  }
+
+  const detail = suiteFire('hermes-suite:notes', { from: 'sheets', notes, taken: false, title: String(grid.name || 'Sheet').slice(0, 60), to: 'whiteboard' })
+
+  if (detail.taken !== true) {
+    throw new Error('Whiteboard did not take the rows. Switch the Whiteboard plugin on in Capabilities > Plugins, then try again.')
+  }
+
+  return notes.length
+}
+
+/** What a column of incoming text is: money when every filled cell carries the
+ *  same sign, a percentage when every one ends in %. */
+function suiteFormat(values) {
+  const filled = values.map(value => String(value ?? '').trim()).filter(Boolean)
+
+  if (filled.length === 0 || !filled.every(value => Number.isFinite(formulaParse(value)))) {
+    return null
+  }
+
+  const sign = CURRENCY_SIGNS.find(symbol => filled.every(value => value.replace(/^[-+(]\s*/, '').startsWith(symbol)))
+
+  return sign ? { kind: 'currency', symbol: sign } : filled.every(value => value.endsWith('%')) ? { kind: 'percent' } : null
+}
+
+/** A table another suite page sent. It becomes a new grid; the id comes back,
+ *  or '' when there was nothing usable in it. */
+function takeSuiteTable(detail) {
+  const names = (Array.isArray(detail?.columns) ? detail.columns : []).slice(0, SUITE_MAX_COLUMNS).map(name => String(name ?? '').trim().slice(0, 80) || 'column')
+  const rows = (Array.isArray(detail?.rows) ? detail.rows : []).filter(Array.isArray).slice(0, SUITE_MAX_ROWS)
+
+  if (names.length === 0 || rows.length === 0) {
+    return ''
+  }
+
+  const id = uid('s')
+  const from = SUITE_PEERS.includes(detail.from) ? detail.from : ''
+  const outcome = takeChatGrid(
+    {
+      columns: names.map((name, at) => ({ format: suiteFormat(rows.slice(0, 200).map(row => row[at])), name })),
+      grid: id,
+      name: String(detail.name || '').trim().slice(0, 80) || (from === 'data' ? 'From Data' : 'Imported table'),
+      rows: rows.map(row => ({ values: row }))
+    },
+    { maxColumns: SUITE_MAX_COLUMNS, maxRows: SUITE_MAX_ROWS, quiet: true }
+  )
+
+  return outcome === 'taken' ? id : ''
+}
+
+/** Answer the other pages. Called once from register(). */
+function suiteListen(listen) {
+  listen(SUITE_HELLO, event => {
+    if (Array.isArray(event?.detail?.peers)) {
+      event.detail.peers.push('sheets')
+    }
+  })
+  listen(SUITE_TABLE, event => {
+    const detail = event?.detail
+
+    if (!detail || detail.to !== 'sheets' || detail.taken) {
+      return
+    }
+
+    const id = takeSuiteTable(detail)
+
+    if (id) {
+      detail.taken = true
+      openFromChat(id)
+    }
+  })
 }
 
 async function takeChatInbox() {
@@ -10528,7 +10738,7 @@ function ImportPanel() {
     style: T.surface,
     children: [
       jsxs('div', {
-        className: 'flex items-center gap-2 border-b px-3 py-2',
+        className: 'sheets-top flex items-center gap-2 border-b px-3 py-2',
         style: T.rule,
           children: [
             jsx(GridSwitcher, {}),
@@ -13792,8 +14002,10 @@ function Sheet({
           row.review === 'needs_review' ? ' sheets-needs-review' : ''
         }${Date.now() < rowLandUntil ? ' sheets-row-in' : ''}`,
         style: Object.assign(
-          { animationDelay: `${Math.min(index, 30) * 40}ms`, height: `${ROW_HEIGHT}px`, width: `${total + PICK_WIDTH}px` },
-          T.rule
+          { animationDelay: `${Math.min(index, 30) * 40}ms`, height: `${ROW_HEIGHT}px`, minWidth: '100%', width: `${total + PICK_WIDTH}px` },
+          T.rule,
+          // A whole-row rule paints the row itself, so the fill runs edge to edge.
+          paint && PAINTS[paint.row] ? { background: PAINTS[paint.row].fill } : null
         ),
         children: [
           jsx('div', {
@@ -13885,7 +14097,7 @@ function Sheet({
       children: [
         jsxs('div', {
           className: 'flex border-b',
-          style: Object.assign({ width: `${total + PICK_WIDTH}px` }, T.rule, T.head),
+          style: Object.assign({ minWidth: '100%', width: `${total + PICK_WIDTH}px` }, T.rule, T.head),
           children: [
             jsx(Tip, {
               label: allPicked ? 'Clear the selection' : `Select all ${visibleIds.length} shown`,
@@ -13916,11 +14128,12 @@ function Sheet({
               children: jsx('div', {
                 style: {
                   height: `${ordered.length * ROW_HEIGHT}px`,
+                  minWidth: '100%',
                   position: 'relative',
                   width: `${total + PICK_WIDTH}px`
                 },
                 children: jsx('div', {
-                  style: { position: 'absolute', top: `${first * ROW_HEIGHT}px`, width: `${total + PICK_WIDTH}px` },
+                  style: { minWidth: '100%', position: 'absolute', top: `${first * ROW_HEIGHT}px`, width: `${total + PICK_WIDTH}px` },
                   children: slice.map(bodyRow)
                 })
               })
@@ -13928,7 +14141,7 @@ function Sheet({
         ordered.length > 0
           ? jsxs('div', {
               className: 'sheets-totals flex border-t',
-              style: Object.assign({ height: `${ROW_HEIGHT}px`, width: `${total + PICK_WIDTH}px` }, T.rule, T.head),
+              style: Object.assign({ height: `${ROW_HEIGHT}px`, minWidth: '100%', width: `${total + PICK_WIDTH}px` }, T.rule, T.head),
               children: [
                 jsx('div', {
                   className: 'grid place-items-center text-xs',
@@ -15935,6 +16148,34 @@ function SheetsPage() {
     }
   }, [grid])
 
+  // The Data page, when it is installed and on. Plugins load in no fixed order,
+  // so look again a moment after this page mounts.
+  const [peers, setPeers] = useState(() => suitePeers())
+
+  useEffect(() => {
+    const timer = setTimeout(() => setPeers(suitePeers()), 1500)
+
+    return () => clearTimeout(timer)
+  }, [])
+
+  const pin = useCallback(() => {
+    try {
+      sendToBoard($grid.get(), $selection.get())
+    } catch (error) {
+      setPeers(suitePeers())
+      host.notifyError(error, 'Sheets could not pin these rows')
+    }
+  }, [])
+
+  const chart = useCallback(() => {
+    try {
+      sendToData($grid.get(), visibleIds)
+    } catch (error) {
+      setPeers(suitePeers())
+      host.notifyError(error, 'Sheets could not open this sheet in Data')
+    }
+  }, [visibleIds])
+
   // Escape clears a selection; it is the fastest way out of a wrong click.
   useEffect(() => {
     const onKey = event => {
@@ -15961,7 +16202,7 @@ function SheetsPage() {
     style: T.surface,
     children: [
       jsxs('div', {
-        className: 'flex flex-wrap items-center gap-2 border-b px-3 py-2',
+        className: 'sheets-top flex flex-wrap items-center gap-2 border-b px-3 py-2',
         style: T.rule,
         children: [
           jsxs('div', {
@@ -16030,7 +16271,13 @@ function SheetsPage() {
                     size: 'xs',
                     variant: 'ghost',
                     children: 'clear'
-                  })
+                  }),
+                  peers.includes('whiteboard')
+                    ? jsx(Tip, {
+                        label: selection.length > 24 ? 'Pin to board takes up to 24 rows at a time' : 'Pin these rows to your open board in Whiteboard, one note each',
+                        children: jsx(Button, { disabled: selection.length > 24, onClick: pin, size: 'xs', variant: 'secondary', children: 'Pin to board' })
+                      })
+                    : null
                 ]
               })
             : null,
@@ -16070,6 +16317,7 @@ function SheetsPage() {
                 ? `Fill all ${derivedCount} prompt column${derivedCount === 1 ? '' : 's'} in dependency order`
                 : 'Add a prompt column first',
             children: jsxs(Button, {
+              className: 'sheets-gold',
               disabled: busy || derivedCount === 0,
               onClick: () => void onRunAll(),
               size: 'xs',
@@ -16192,6 +16440,20 @@ function SheetsPage() {
 
           jsx(RunSettings, { disabled: busy }),
 
+          peers.includes('data')
+            ? jsx(Tip, {
+                label: 'Chart in Data: open the rows on screen as a report, where Hermes suggests the charts',
+                children: jsxs(Button, {
+                  className: 'sheets-gold',
+                  disabled: busy,
+                  onClick: chart,
+                  size: 'xs',
+                  variant: 'secondary',
+                  children: [jsx(icons.BarChart3, {}), 'Chart']
+                })
+              })
+            : null,
+
           jsx(Tip, {
             label: 'Export every row and column as Excel or CSV',
             children: jsx(Button, {
@@ -16294,12 +16556,28 @@ function SheetsPage() {
           })
         : null,
 
-      jsx(FormatBar, { visibleIds }),
       jsx(SheetChooser, {}),
 
       jsxs('div', {
-        className: 'flex min-h-0 flex-1',
+        className: 'sheets-stage flex min-h-0 flex-1',
         children: [
+          jsxs('div', {
+            className: 'sheets-desk',
+            children: [
+              jsxs('div', {
+                className: 'sheets-headline',
+                children: [
+                  jsx('h1', { children: grid.name }),
+                  jsx('span', {
+                    className: 'sheets-num',
+                    children: `${grid.rows.length.toLocaleString('en-US')} row${grid.rows.length === 1 ? '' : 's'}, ${grid.columns.length} column${grid.columns.length === 1 ? '' : 's'}`
+                  })
+                ]
+              }),
+              jsxs('div', {
+                className: 'sheets-card',
+                children: [
+                  jsx(FormatBar, { visibleIds }),
           jsx(Sheet, {
             columns: grid.columns,
             filter,
@@ -16319,6 +16597,10 @@ function SheetsPage() {
             reviewFilter,
             running: busy,
             sort
+          })
+                ]
+              })
+            ]
           }),
           ask.open ? jsx(AskPanel, { rowCount: askCount, scope }) : null
         ]
@@ -16344,6 +16626,18 @@ export default {
     hydrateWorkflowLibrary(ctx.storage)
     hydrateHandoffLibrary(ctx.storage)
     hydrateChatInbox(ctx.storage)
+
+    // The other suite pages reach this one through window events (see suiteListen).
+    if (typeof window !== 'undefined') {
+      suiteListen((type, listener) => {
+        if (typeof ctx.addEventListener === 'function') {
+          ctx.addEventListener(window, type, listener)
+        } else {
+          window.addEventListener(type, listener)
+          ctx.onDispose(() => window.removeEventListener(type, listener))
+        }
+      })
+    }
 
     if (typeof ctx.rest === 'function') {
       pluginRest = (path, options) => ctx.rest(path, options)
