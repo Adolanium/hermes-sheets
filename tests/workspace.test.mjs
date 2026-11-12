@@ -58,6 +58,31 @@ function loadWorkspace(responses = [], options = {}) {
         formulaColumnFromDraft,
         setColumnTotal,
         exportGrid,
+        $cells,
+        $ruleIdeas,
+        $sheetAsk,
+        addRule,
+        applyLook,
+        cellLook,
+        cleanFormat,
+        cleanLook,
+        cleanRule,
+        clearLook,
+        decideRuleIdea,
+        exportLooks,
+        fileTableHint,
+        formatValue,
+        nudgeDecimals,
+        pickCell,
+        pruneStyles,
+        removeRule,
+        rowPaint,
+        ruleText,
+        rowsToCsvText,
+        ruleHits,
+        rulesBrief,
+        setColumnFormat,
+        suggestRules,
         hermesMarks,
         hydrateChatInbox,
         hydrateWorkspace,
@@ -5288,4 +5313,242 @@ test('totals sum, average and count the rows shown, and drop with their column',
   runtime.setColumnTotal('c1', 'max')
   runtime.removeColumn('c1')
   assert.equal('c1' in runtime.$grid.get().totals, false)
+})
+
+function formatGrid(runtime) {
+  runtime.hydrateWorkspace(makeStorage())
+  runtime.setGrid({
+    ...runtime.$grid.get(),
+    columns: [
+      { id: 'c1', kind: 'literal', name: 'item', type: 'text' },
+      { id: 'c2', kind: 'literal', name: 'price', type: 'text' },
+      { id: 'c3', kind: 'literal', name: 'margin', type: 'text' }
+    ],
+    rows: [
+      ['Latte', '3.4', '18%'],
+      ['Tea', '2', '42%'],
+      ['Cake', '1250.5', '0.07']
+    ].map(([item, price, margin], index) => ({ cells: { c1: { state: 'done', value: item }, c2: { state: 'done', value: price }, c3: { state: 'done', value: margin } }, id: `r${index + 1}` }))
+  })
+}
+
+test('a number format changes what a cell shows and never what it holds', () => {
+  const runtime = loadWorkspace()
+
+  assert.equal(runtime.formatValue('1250.5', { kind: 'currency', symbol: '£' }), '£1,250.50')
+  assert.equal(runtime.formatValue('-3', { kind: 'currency', symbol: '$' }), '-$3.00')
+  assert.equal(runtime.formatValue('0.184', { kind: 'percent' }), '18%')
+  assert.equal(runtime.formatValue('18.4%', { decimals: 1, kind: 'percent' }), '18.4%')
+  assert.equal(runtime.formatValue('1234567', { kind: 'number' }), '1,234,567')
+  assert.equal(runtime.formatValue('2.5', { decimals: 3, kind: 'number' }), '2.500')
+  assert.equal(runtime.formatValue('n/a', { kind: 'currency', symbol: '£' }), 'n/a')
+  assert.equal(runtime.formatValue('', { kind: 'percent' }), '')
+  assert.equal(runtime.formatValue('7', null), '7')
+  assert.equal(runtime.cleanFormat({ kind: 'date' }), null)
+  assert.equal(runtime.cleanFormat({ kind: 'currency', symbol: '<b>' }).symbol, '$')
+
+  formatGrid(runtime)
+  const before = JSON.stringify(runtime.$grid.get().rows)
+
+  runtime.setColumnFormat(['c2'], { kind: 'currency', symbol: '£' })
+  runtime.nudgeDecimals(['c3'], 1)
+  runtime.setColumnFormat(['c3'], { decimals: 1, kind: 'percent' })
+  assert.equal(JSON.stringify(runtime.$grid.get().rows), before)
+  assert.equal(runtime.$grid.get().columns[1].format.symbol, '£')
+  assert.equal(runtime.columnTotal('sum', runtime.$grid.get().columns[1], runtime.$grid.get().rows), '£1,255.90')
+  assert.equal(runtime.columnTotal('max', runtime.$grid.get().columns[2], runtime.$grid.get().rows), '42.0%')
+  assert.equal(runtime.columnTotal('count', runtime.$grid.get().columns[1], runtime.$grid.get().rows), '3')
+
+  runtime.nudgeDecimals(['c2'], -1)
+  assert.equal(runtime.$grid.get().columns[1].format.decimals, 1)
+  runtime.setColumnFormat(['c2'], null)
+  assert.equal('format' in runtime.$grid.get().columns[1], false)
+})
+
+test('bold, italic, colours and alignment go on the picked cells, toggle, and clear', () => {
+  const runtime = loadWorkspace()
+
+  formatGrid(runtime)
+  const block = { columnIds: ['c1', 'c2'], rowIds: ['r1', 'r2'] }
+
+  assert.equal(runtime.applyLook({ columnIds: ['c1'], rowIds: ['r1'] }, { b: 'toggle' }), true)
+  // One cell of the block is already bold, so the toggle turns the rest on.
+  runtime.applyLook(block, { b: 'toggle' })
+  assert.deepEqual(JSON.parse(JSON.stringify(runtime.$grid.get().styles)), { r1: { c1: { b: 1 }, c2: { b: 1 } }, r2: { c1: { b: 1 }, c2: { b: 1 } } })
+  runtime.applyLook(block, { b: 'toggle' })
+  assert.deepEqual(JSON.parse(JSON.stringify(runtime.$grid.get().styles)), {})
+
+  runtime.applyLook(block, { a: 'center', c: 'red', f: 'yellow', i: 'toggle' })
+  runtime.applyLook({ columnIds: ['c1'], rowIds: ['r1'] }, { c: 'not-a-colour', f: '' })
+  assert.deepEqual(JSON.parse(JSON.stringify(runtime.$grid.get().styles.r1)), { c1: { a: 'center', i: 1 }, c2: { a: 'center', c: 'red', f: 'yellow', i: 1 } })
+  assert.equal(runtime.applyLook({ columnIds: [], rowIds: ['r1'] }, { b: 1 }), false)
+
+  const look = runtime.cellLook({ color: 'x' }, { b: 1, f: 'yellow' }, 'red', { id: 'c2', format: { kind: 'number' } })
+
+  assert.equal(look.fontWeight, 700)
+  assert.match(look.background, /^hsl\(48 /)
+  assert.equal(look.justifyContent, 'flex-end')
+  assert.match(runtime.cellLook({}, null, 'red', { id: 'c1' }).background, /^hsl\(4 /)
+
+  // A deleted row takes its looks with it when the grid is stored.
+  runtime.setGrid({ ...runtime.$grid.get(), rows: runtime.$grid.get().rows.slice(1) })
+  assert.deepEqual(Object.keys(runtime.persistedGrid(runtime.$grid.get()).styles), ['r2'])
+  runtime.clearLook({ columnIds: ['c1', 'c2', 'c3'], rowIds: ['r2'] })
+  assert.equal('r2' in runtime.$grid.get().styles, false)
+})
+
+test('click picks one cell and shift-click stretches a block over what is on screen', () => {
+  const runtime = loadWorkspace()
+  const rows = ['r3', 'r1', 'r2']
+  const columns = ['c1', 'c2', 'c3']
+
+  runtime.pickCell(rows, columns, 'r1', 'c2', false)
+  assert.deepEqual(JSON.parse(JSON.stringify(runtime.$cells.get())), { anchor: { columnId: 'c2', rowId: 'r1' }, columnIds: ['c2'], rowIds: ['r1'] })
+  runtime.pickCell(rows, columns, 'r3', 'c3', true)
+  assert.deepEqual(Array.from(runtime.$cells.get().rowIds), ['r3', 'r1'])
+  assert.deepEqual(Array.from(runtime.$cells.get().columnIds), ['c2', 'c3'])
+  runtime.pickCell(rows, columns, 'r2', 'c1', true)
+  assert.deepEqual(Array.from(runtime.$cells.get().rowIds), ['r1', 'r2'])
+  assert.deepEqual(Array.from(runtime.$cells.get().columnIds), ['c1', 'c2'])
+  runtime.pickCell(rows, columns, 'r2', 'c1', false)
+  assert.deepEqual(Array.from(runtime.$cells.get().rowIds), ['r2'])
+})
+
+test('highlight rules compare numbers as numbers, paint cells or rows, and refuse what they cannot run', () => {
+  const runtime = loadWorkspace()
+
+  formatGrid(runtime)
+  const { columns, rows } = runtime.$grid.get()
+
+  assert.equal(runtime.cleanRule(columns, { column: 'nope', op: 'lt', value: '1' }), null)
+  assert.equal(runtime.cleanRule(columns, { column: 'margin', op: 'lt', value: 'low' }), null)
+  assert.equal(runtime.cleanRule(columns, { column: 'margin', op: 'between', value: '1' }), null)
+  assert.equal(runtime.cleanRule(columns, { column: 'margin', op: 'eq', value: '' }), null)
+  assert.equal(runtime.cleanRule(columns, { column: 'Margin ', fill: 'neon', op: 'empty' }).fill, 'yellow')
+
+  const low = runtime.addRule({ column: 'margin', fill: 'red', op: 'lt', value: '20%' })
+  const tea = runtime.addRule({ columnId: 'c1', fill: 'green', op: 'contains', row: true, value: 'TEA' })
+
+  assert.equal(low.columnId, 'c3')
+  assert.deepEqual(rows.map(row => runtime.ruleHits(low, row)), [true, false, true])
+  assert.deepEqual(JSON.parse(JSON.stringify(runtime.rowPaint(runtime.$grid.get().rules, rows[0]))), { cells: { c3: 'red' }, row: '' })
+  assert.deepEqual(JSON.parse(JSON.stringify(runtime.rowPaint(runtime.$grid.get().rules, rows[1]))), { cells: {}, row: 'green' })
+  assert.equal(runtime.ruleHits({ columnId: 'c2', op: 'gte', value: '1,250.50' }, rows[2]), true)
+  // The rule higher in the list wins where two want the same row.
+  assert.equal(runtime.rowPaint([{ columnId: 'c1', fill: 'red', op: 'filled', row: true, value: '' }, { columnId: 'c2', fill: 'blue', op: 'filled', row: true, value: '' }], rows[0]).row, 'red')
+  runtime.setColumnFormat(['c3'], { kind: 'percent' })
+  assert.equal(runtime.ruleText({ columnId: 'c3', op: 'lt', value: '0.25' }, runtime.$grid.get().columns), 'margin is under 25%')
+  assert.equal(runtime.ruleText({ columnId: 'c1', op: 'contains', value: 'tea' }, runtime.$grid.get().columns), 'item contains tea')
+  assert.equal(runtime.ruleHits({ columnId: 'c1', op: 'neq', value: 'latte' }, rows[0]), false)
+  assert.equal(runtime.ruleHits({ columnId: 'zz', op: 'empty', value: '' }, rows[0]), true)
+
+  runtime.removeRule(tea.id)
+  assert.deepEqual(Array.from(runtime.$grid.get().rules, rule => rule.id), [low.id])
+
+  for (let index = 0; index < 20; index += 1) {
+    runtime.addRule({ columnId: 'c2', op: 'gt', value: String(index) })
+  }
+
+  assert.equal(runtime.$grid.get().rules.length, 12)
+})
+
+test('Hermes suggests highlight rules from column summaries, and none is added until accepted', async () => {
+  const reply = `Here you go {"rules": [
+    {"column": "margin", "op": "lt", "value": "0.2", "fill": "red", "row": true, "reason": "Thin margins need a look"},
+    {"column": "made up", "op": "gt", "value": "5", "fill": "green"},
+    {"column": "price", "op": "gt", "value": "plenty", "fill": "green"},
+    {"column": "item", "op": "empty", "fill": "grey"}
+  ]}`
+  const runtime = loadWorkspace([reply])
+
+  formatGrid(runtime)
+  assert.equal(await runtime.suggestRules(), 2)
+
+  const sent = runtime.requestLog()[0]
+
+  assert.equal(sent.name, 'llm.oneshot')
+  assert.match(sent.payload.input, /"margin" \(numbers\): lowest 0\.07, highest 0\.42/)
+  assert.match(sent.payload.input, /"item" \(text, 3 different\)/)
+  assert.equal('rules' in runtime.$grid.get(), false)
+
+  const [first, second] = runtime.$ruleIdeas.get().items
+
+  assert.equal(first.by, 'hermes')
+  assert.equal(first.note, 'Thin margins need a look')
+  runtime.decideRuleIdea(second.id, false)
+  assert.equal('rules' in runtime.$grid.get(), false)
+  runtime.decideRuleIdea(first.id, true)
+  assert.equal(runtime.$grid.get().rules.length, 1)
+  assert.equal(runtime.$grid.get().rules[0].row, true)
+  assert.equal(runtime.$ruleIdeas.get().items.length, 0)
+
+  const silent = loadWorkspace(['I would rather not.'])
+
+  formatGrid(silent)
+  assert.equal(await silent.suggestRules(), 0)
+  assert.match(silent.$ruleIdeas.get().error, /no rule to suggest/)
+})
+
+test('the Excel export carries number formats, cell looks and rule fills', async () => {
+  const calls = []
+  const runtime = loadWorkspace([], {
+    os: { pickSavePath: async () => '/Users/me/cart.xlsx' },
+    rest: async (route, request) => {
+      calls.push({ body: request.body, route })
+
+      return { ok: true, path: request.body.path }
+    }
+  })
+
+  formatGrid(runtime)
+  runtime.setColumnFormat(['c2'], { kind: 'number' })
+  runtime.setColumnFormat(['c3'], { kind: 'percent' })
+  runtime.applyLook({ columnIds: ['c1'], rowIds: ['r1'] }, { b: 1, f: 'blue' })
+  runtime.addRule({ column: 'margin', fill: 'red', op: 'lt', row: true, value: '10%' })
+
+  const grid = runtime.$grid.get()
+
+  await runtime.exportGrid(grid.columns, grid.rows, grid.name, grid)
+
+  const sheet = JSON.parse(JSON.stringify(calls[0].body.sheet))
+
+  assert.deepEqual(sheet.columns, [
+    { name: 'item', type: 'text' },
+    { format: { decimals: 2, kind: 'number' }, name: 'price', type: 'number' },
+    { format: { kind: 'percent' }, name: 'margin', type: 'number' }
+  ])
+  assert.deepEqual(sheet.rows, [['Latte', '3.4', '0.18'], ['Tea', '2', '0.42'], ['Cake', '1250.5', '0.07']])
+  assert.deepEqual(sheet.styles, [[0, 0, { b: 1, f: 'blue' }], [2, 0, { f: 'red' }], [2, 1, { f: 'red' }], [2, 2, { f: 'red' }]])
+})
+
+test('an Excel workbook imports through the backend, one sheet at a time', async () => {
+  const calls = []
+  const runtime = loadWorkspace([], {
+    os: { pickOpenPath: async () => '/Users/me/cart.xlsx' },
+    rest: async (route, request) => {
+      calls.push({ body: request.body, route })
+
+      const sheet = request.body.sheet || 'Sales'
+
+      return { name: 'cart.xlsx', ok: true, rows: sheet === 'Notes' ? [['note'], ['He said "hi", twice']] : [['a', 'b'], [1, 2]], sheet, sheets: ['Sales', 'Notes'], truncated: false }
+    }
+  })
+  const pending = runtime.importFromFile()
+
+  await new Promise(resolve => setImmediate(resolve))
+  assert.deepEqual(Array.from(runtime.$sheetAsk.get().sheets), ['Sales', 'Notes'])
+  runtime.$sheetAsk.get().pick('Notes')
+
+  const file = await pending
+
+  assert.deepEqual(calls.map(call => [call.route, call.body.sheet]), [['/picked-file/table', undefined], ['/picked-file/table', 'Notes']])
+  assert.equal(file.text, 'note\n"He said ""hi"", twice"')
+  assert.equal(runtime.$sheetAsk.get(), null)
+  assert.equal(runtime.fileTableHint(file.path), 'csv')
+
+  const again = runtime.importFromFile()
+
+  await new Promise(resolve => setImmediate(resolve))
+  runtime.$sheetAsk.get().pick(null)
+  assert.equal(await again, null)
 })

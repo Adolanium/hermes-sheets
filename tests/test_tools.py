@@ -3,8 +3,11 @@ the page's inbox. They never write to a grid copy except for a grid the agent ju
 
 import importlib.util
 import json
+import re
 import sys
+import zipfile
 from pathlib import Path
+from xml.etree import ElementTree
 
 import pytest
 
@@ -309,3 +312,125 @@ def test_formula_columns_are_described_and_never_proposed():
         {"row": "r1", "column": "length", "value": "3", "reason": "Shorter"}])
     assert refused["ok"] is False and "formula column" in json.dumps(refused)
     assert inbox() == []
+
+
+def _outside(tmp_path, name):
+    folder = tmp_path.parent / f"{tmp_path.name}-{name}"
+    folder.mkdir()
+    return folder
+
+
+def test_picked_workbook_carries_number_formats_and_cell_looks(tmp_path, home):
+    target = _outside(tmp_path, "looks") / "cart.xlsx"
+    sheet = {
+        "name": "Cart",
+        "columns": [
+            {"name": "item", "type": "text"},
+            {"name": "price", "type": "number", "format": {"kind": "currency", "symbol": "£"}},
+            {"name": "margin", "type": "number", "format": {"kind": "percent", "decimals": 1}},
+            {"name": "units", "type": "number", "format": {"kind": "number", "decimals": 0}},
+            {"name": "odd", "type": "number", "format": {"kind": "currency", "symbol": "\"<evil>", "decimals": 99}},
+        ],
+        "rows": [["Latte", "3.4", "0.18", "1200", "5"], ["Tea", "n/a", "0.42", "8", ""], ["", "", "", "", ""]],
+        "styles": [
+            [0, 0, {"b": 1, "i": 1, "c": "red"}],
+            [0, 2, {"f": "red"}],
+            [2, 1, {"f": "yellow", "a": "center"}],
+            [1, 0, {"f": "no such paint", "c": "<x>", "a": "sideways"}],
+            ["0", 0, {"b": 1}],
+            [0, 1, "bold"],
+            [True, False, {"b": 1}],
+        ],
+    }
+
+    assert picked.write_xlsx(str(target), sheet, store.hermes_home())["ok"] is True
+    parts = _workbook_parts(target)
+    styles, data = parts["xl/styles.xml"], parts["xl/worksheets/sheet1.xml"]
+    ElementTree.fromstring(styles)
+    ElementTree.fromstring(data)
+
+    assert "formatCode='\"£\"#,##0.00;-\"£\"#,##0.00'" in styles
+    assert 'formatCode="0.0%"' in styles and 'formatCode="#,##0"' in styles
+    assert "evil" not in styles and '"$"#,##0.00' in styles
+    assert "<b/><i/>" in styles and '<alignment horizontal="center"/>' in styles
+    assert styles.count('patternType="solid"') == 2
+    # The header keeps style 1, and a format lands only on cells that hold a number.
+    assert '<c r="A1" t="inlineStr" s="1">' in data
+    assert '<c r="B3" t="inlineStr"><is>' in data
+    assert '<c r="A3" t="inlineStr"><is>' in data
+    assert re.search(r'<c r="B2" s="\d+"><v>3.4</v></c>', data)
+    # An empty cell is still written when it carries a fill.
+    assert re.search(r'<c r="B4" s="\d+"/>', data)
+    assert "<f>" not in data
+
+    back = picked.read_table(str(target), None, store.hermes_home())
+    assert back["ok"] is True and back["sheets"] == ["Cart"]
+    assert back["rows"][0] == ["item", "price", "margin", "units", "odd"]
+    assert back["rows"][1] == ["Latte", "£3.40", "18%", 1200, "$5.00"]
+
+
+def _two_sheet_workbook(path, extra=""):
+    main = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+    rel = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+    pkg = "http://schemas.openxmlformats.org/package/2006/relationships"
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("xl/workbook.xml", (
+            f'<workbook xmlns="{main}" xmlns:r="{rel}"><sheets>'
+            '<sheet name="Sales" sheetId="1" r:id="rId1"/><sheet name="Secret" sheetId="2" state="hidden" r:id="rId2"/>'
+            '<sheet name="Notes" sheetId="3" r:id="rId3"/></sheets></workbook>'
+        ))
+        archive.writestr("xl/_rels/workbook.xml.rels", (
+            f'<Relationships xmlns="{pkg}">'
+            + "".join(f'<Relationship Id="rId{n}" Type="{rel}/worksheet" Target="worksheets/sheet{n}.xml"/>' for n in (1, 2, 3))
+            + "</Relationships>"
+        ))
+        archive.writestr("xl/sharedStrings.xml", f'<sst xmlns="{main}"><si><t>day</t></si><si><t>cups</t></si><si><r><t>Mon</t></r><r><t>day</t></r></si></sst>')
+        archive.writestr("xl/worksheets/sheet1.xml", (
+            f'{extra}<worksheet xmlns="{main}"><sheetData>'
+            '<row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>1</v></c></row>'
+            '<row r="2"><c r="A2" t="s"><v>2</v></c><c r="B2"><v>41</v></c><c r="D2" t="b"><v>1</v></c></row>'
+            '<row r="3"><c r="B3"><f>SUM(B2)</f><v>41.5</v></c></row>'
+            "</sheetData></worksheet>"
+        ))
+        archive.writestr("xl/worksheets/sheet2.xml", f'<worksheet xmlns="{main}"><sheetData/></worksheet>')
+        archive.writestr("xl/worksheets/sheet3.xml", (
+            f'<worksheet xmlns="{main}"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>note</t></is></c></row></sheetData></worksheet>'
+        ))
+
+
+def test_picked_workbook_reads_one_visible_sheet_and_never_runs_a_formula(tmp_path, home):
+    target = _outside(tmp_path, "read") / "week.xlsx"
+    _two_sheet_workbook(target)
+
+    first = picked.read_table(str(target), None, store.hermes_home())
+    assert first["ok"] is True and first["sheets"] == ["Sales", "Notes"] and first["sheet"] == "Sales"
+    assert first["rows"] == [["day", "cups", "", ""], ["Monday", 41, "", "true"], ["", 41.5, "", ""]]
+    assert picked.read_table(str(target), "Notes", store.hermes_home())["rows"] == [["note"]]
+    # A hidden sheet cannot be asked for by name.
+    assert picked.read_table(str(target), "Secret", store.hermes_home())["sheet"] == "Sales"
+
+
+def test_picked_workbook_reader_refuses_what_it_should(tmp_path, home, monkeypatch):
+    outside = _outside(tmp_path, "refuse")
+    broken = outside / "broken.xlsx"
+    broken.write_bytes(b"not a zip at all")
+    assert "not an Excel workbook" in picked.read_table(str(broken), None, store.hermes_home())["error"]
+
+    dtd = outside / "dtd.xlsx"
+    _two_sheet_workbook(dtd, extra='<!DOCTYPE x [<!ENTITY a "b">]>')
+    assert picked.read_table(str(dtd), None, store.hermes_home())["ok"] is False
+
+    assert "only reads" in picked.read_table(str(outside / "old.xls"), None, store.hermes_home())["error"]
+    inside = store.hermes_home() / "week.xlsx"
+    inside.parent.mkdir(parents=True, exist_ok=True)
+    _two_sheet_workbook(inside)
+    assert "Hermes home" in picked.read_table(str(inside), None, store.hermes_home())["error"]
+
+    good = outside / "good.xlsx"
+    _two_sheet_workbook(good)
+    monkeypatch.setattr(picked, "MAX_COLUMNS", 2)
+    # A sheet wider than the limit is reported, not quietly narrowed.
+    assert picked.read_table(str(good), None, store.hermes_home())["truncated"] is True
+    monkeypatch.setattr(picked, "MAX_COLUMNS", 60)
+    monkeypatch.setattr(picked, "MAX_TABLE_BYTES", 10)
+    assert "over 8 MB" in picked.read_table(str(good), None, store.hermes_home())["error"]

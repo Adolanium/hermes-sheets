@@ -81,6 +81,11 @@ def read_picked_file(body: dict = Body(...)) -> dict:
     return _picked().read_text(body.get("path"), _store().hermes_home())
 
 
+@router.post("/picked-file/table")
+def read_picked_table(body: dict = Body(...)) -> dict:
+    return _picked().read_table(body.get("path"), body.get("sheet"), _store().hermes_home())
+
+
 @router.post("/picked-file/write")
 def write_picked_file(body: dict = Body(...)) -> dict:
     return _picked().write_text(body.get("path"), body.get("text"), _store().hermes_home())
