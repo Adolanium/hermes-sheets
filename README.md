@@ -23,7 +23,7 @@
 
 </div>
 
-![Sheets in Hermes Desktop: a Hermes agent building a sheet from one sentence, one agent per row filling a research column, choosing which suggested columns run, and reviewing the columns Hermes proposed from a chat before they apply](docs/assets/hero.jpg)
+![Sheets in Hermes Desktop: a Hermes agent building a sheet from one sentence, one agent per row filling a research column, choosing which suggested columns run, and reviewing an urgency fix Hermes proposed before it applies](docs/assets/hero.jpg)
 
 ## Powered by Hermes
 
@@ -48,7 +48,7 @@ Type one sentence on the start page, like *The 12 most-starred open-source vecto
 
 You watch it work. The start page shows each step the agent takes, such as *Searching the web* or *Reading github.com*, with a step count and a **Stop** button. The build ends on its own after five minutes or 40 tool calls, and a sheet holds at most 40 rows and 8 columns.
 
-![A sheet of twelve open-source vector databases that one Hermes agent built from a sentence, with a source link on every row and a research column answering whether each has a managed service](docs/assets/built.png)
+![A sheet of twelve open-source vector databases that one Hermes agent built from a sentence, with a source link on every row, a research column classifying how each one is deployed, and a license-risk column](docs/assets/built.png)
 
 The agent gets a look-it-up-only brief, the same one research columns use. When the rows land, Hermes reads the sheet and suggests columns like it does for a sheet you bring. Nothing fills until you pick it.
 
@@ -56,11 +56,11 @@ The agent gets a look-it-up-only brief, the same one research columns use. When 
 
 Reading the sheet is one model call. Hermes sees the column names and the first eight rows, then suggests columns like urgency, issue category, or next action, and says why each one helps.
 
-![Hermes read sixteen customer reports, summarized them, and suggested urgency, issue category, sentiment, next action, and a priority score, each with why it helps](docs/assets/reading.png)
+![Hermes read sixteen customer reports, summarized them, and suggested urgency, issue type, sentiment, next action, and a priority score, each with why it helps](docs/assets/reading.png)
 
 Untick what you don't need. Every column costs one call per row, so 3 columns on 24 rows is 72 calls, and the button says so. Then every row gets an answer in the shape the column declared.
 
-![The same sixteen reports with urgency, issue category, and next action filled in by Hermes](docs/assets/triaged.png)
+![The same sixteen reports with urgency, issue type, and next action filled in by Hermes](docs/assets/triaged.png)
 
 ## Or ask your own question
 
@@ -92,13 +92,13 @@ Click a finding, a bar, or a cell of a cross-tab, and the grid narrows to those 
 
 Untick anything you don't want, then apply the rest.
 
-![The agent's proposed urgency corrections, each with its old value, new value, and reason, waiting to be applied](docs/assets/writeback.png)
+![The agent's proposed urgency correction, with its old value, new value, and reason, waiting to be applied](docs/assets/writeback.png)
 
 Sheets writes the whole set or none of it. If a cell changed after the agent looked at it, that proposal is disabled. Cells you typed by hand are protected, and no later fill overwrites them.
 
 Cells Hermes changed keep a thin outline, with the reason on hover, until you or a fill change them again. Every applied set becomes a receipt with the exact before and after values. **Restore** puts the cells back and takes added columns and rows out again, in one click. It stays disabled if anything has touched them since, including a fill of an added column, so it never erases newer work.
 
-![A receipt for two applied cells, showing before and after values and an enabled restore](docs/assets/receipt.png)
+![A receipt for an applied cell, showing the before and after values, the agent's reason, and an enabled restore](docs/assets/receipt.png)
 
 ## Ask about your sheet from any chat
 
@@ -118,7 +118,7 @@ Some questions need the web. What is this project's latest release? Which licens
 
 While it works, each cell shows what its agent is doing, like *Reading github.com*. The finished answer carries a source chip with the pages it read, its tool calls, and its time. One more click opens the agent's whole conversation as a normal Hermes chat.
 
-![Five open-source projects researched row by row: latest release and license answered by Hermes agents with sources, feeding an adopt, trial, or avoid verdict](docs/assets/research.png)
+![Five open-source projects researched row by row: latest release and license answered by Hermes agents, one source popover open, feeding an adopt, trial, or avoid verdict](docs/assets/research.png)
 
 Research agents get a look-it-up-only brief and treat the row as evidence, not instructions. A tool call that could change something, like a shell command or a file write, is flagged on the cell. Approval prompts inside these hidden sessions are denied automatically, because nobody could see them.
 
