@@ -227,6 +227,38 @@ def test_picked_file_read_is_limited_to_text_outside_hermes_home(tmp_path, home)
     assert "only reads" in picked.read_text(str(link), store.hermes_home())["error"]
 
 
+def test_picked_file_read_accepts_only_the_browser_pickers_staged_copy(tmp_path, home):
+    uploads = home / "uploads"
+    uploads.mkdir()
+    staged = uploads / "web-0123456789abcdef-hk_tasks.csv"
+    staged.write_text("a,b\n1,2\n")
+    read = picked.read_text(str(staged), store.hermes_home())
+    assert read["ok"] and read["text"] == "a,b\n1,2\n"
+
+    # Only reads: an export never lands in the staging folder.
+    assert "Hermes home" in picked.write_text(str(uploads / "web-0123456789abcdef-out.csv"), "x", store.hermes_home())["error"]
+
+    for name in ("web-xyz-hk_tasks.csv", "hk_tasks.csv", "web-0123456789abcdef-.env"):
+        other = uploads / name
+        other.write_text("a,b\n")
+        assert picked.read_text(str(other), store.hermes_home())["ok"] is False
+
+    nested = uploads / "deeper"
+    nested.mkdir()
+    deep = nested / "web-0123456789abcdef-hk_tasks.csv"
+    deep.write_text("a,b\n")
+    assert "Hermes home" in picked.read_text(str(deep), store.hermes_home())["error"]
+
+    private = home / "memories.csv"
+    private.write_text("secret\n")
+    link = uploads / "web-fedcba9876543210-alias.csv"
+    try:
+        link.symlink_to(private)
+    except OSError:
+        return
+    assert "Hermes home" in picked.read_text(str(link), store.hermes_home())["error"]
+
+
 def test_picked_file_write_is_limited_to_exports_outside_hermes_home(tmp_path, home):
     outside = tmp_path.parent / f"{tmp_path.name}-exports"
     outside.mkdir()

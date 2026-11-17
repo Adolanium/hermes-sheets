@@ -41,6 +41,9 @@ MAX_CELL = 2000
 _NUMBER = re.compile(r"-?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?")
 _XML_ILLEGAL = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\ufffe\uffff]")
 _BINARY_SAMPLE = 4096
+# The browser webapp's picker uploads the file and hands back a copy Hermes staged at
+# ``<profile home>/uploads/web-<16 hex>-<name>`` (``hermes_cli/staged_uploads.py``).
+_STAGED_NAME = re.compile(r"web-[0-9a-f]{16}-[A-Za-z0-9._-]+")
 
 
 class _Refused(Exception):
@@ -57,6 +60,19 @@ def _protected(home: Path | None) -> list[Path]:
     return roots
 
 
+def _staged_upload(path: Path, resolved: Path, home: Path | None) -> bool:
+    """Whether *path* is a copy the browser picker staged for this profile: a regular file, not a
+    link, directly in ``<home>/uploads`` and named the way Hermes names staged uploads. Only reads
+    accept it, and nothing else under the home."""
+    if home is None or path.is_symlink() or not resolved.is_file():
+        return False
+    try:
+        uploads = (home / "uploads").resolve(strict=True)
+    except (OSError, RuntimeError):
+        return False
+    return resolved.parent == uploads and _STAGED_NAME.fullmatch(resolved.name) is not None
+
+
 def _checked(raw, suffixes: tuple[str, ...], verb: str, home: Path | None) -> Path:
     if not isinstance(raw, str) or not raw.strip() or "\x00" in raw:
         raise _Refused("No file was picked.")
@@ -67,6 +83,8 @@ def _checked(raw, suffixes: tuple[str, ...], verb: str, home: Path | None) -> Pa
     kinds = ", ".join(suffixes)
     if path.suffix.lower() not in suffixes or resolved.suffix.lower() not in suffixes:
         raise _Refused(f"Sheets only {verb} {kinds} files.")
+    if verb == "reads" and _staged_upload(path, resolved, home):
+        return resolved
     for root in _protected(home):
         if resolved == root or root in resolved.parents:
             raise _Refused(f"Sheets never {verb} files inside the Hermes home folder.")
